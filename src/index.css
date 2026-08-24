@@ -1,0 +1,321 @@
+/* Global reset and base styles */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #1a1a2e;
+  background-color: #f8f9fa;
+}
+
+body {
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+/* Header & Navigation */
+.nav-bar {
+  background: #1e293b;
+  color: #f8fafc;
+  padding: 1rem 2rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.nav-bar h1 {
+  font-size: 1.25rem;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+.nav-bar span {
+  color: #94a3b8;
+  font-size: 0.875rem;
+}
+
+/* Tabs Navigation */
+.tab-navigation {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 2px solid #e2e8f0;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.tab-button {
+  padding: 0.75rem 1.25rem;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  font-size: 0.925rem;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+.tab-button:hover {
+  color: #3b82f6;
+  background-color: #f1f5f9;
+  border-radius: 4px 4px 0 0;
+}
+
+.tab-button.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+  background-color: #eff6ff;
+  border-radius: 4px 4px 0 0;
+}
+
+/* Container */
+.page-container {
+  max-width: 1000px;
+  margin: 1.5rem auto;
+  padding: 0 1.5rem 3rem 1.5rem;
+}
+
+.report-container {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 2rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.report-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.report-subtitle {
+  color: #64748b;
+  margin-bottom: 1.5rem;
+}
+
+/* Report Financial Table */
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.report-table td {
+  padding: 0.4rem 0.5rem;
+  font-size: 0.875rem;
+}
+
+.report-table .label {
+  color: #374151;
+}
+
+.report-table .amount {
+  text-align: right;
+  color: #111827;
+}
+
+.report-table .section-header td {
+  font-weight: 700;
+  color: #1e293b;
+  padding-top: 1.25rem;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.report-table .divider td {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 0.25rem;
+}
+
+.report-table .total-row td {
+  font-weight: 700;
+  border-top: 2px solid #1e293b;
+  padding-top: 0.5rem;
+}
+
+.report-table .net-profit-row td {
+  font-weight: 700;
+  font-size: 1rem;
+  border-top: 3px double #1e293b;
+  padding-top: 0.5rem;
+}
+
+.report-table .positive {
+  color: #16a34a;
+}
+
+.report-table .negative {
+  color: #dc2626;
+}
+
+/* Data Table (for Invoices, Bills, Transactions, Accounts) */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+}
+
+.data-table th {
+  background-color: #f8fafc;
+  color: #475569;
+  text-align: left;
+  padding: 0.75rem 1rem;
+  font-size: 0.825rem;
+  font-weight: 600;
+  border-bottom: 2px solid #e2e8f0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.data-table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 0.875rem;
+  color: #334155;
+}
+
+.data-table tr:hover {
+  background-color: #f8fafc;
+}
+
+.data-table .num {
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge-paid {
+  background-color: #dcfce7;
+  color: #15803d;
+}
+
+.badge-sent {
+  background-color: #dbeafe;
+  color: #1d4ed8;
+}
+
+.badge-draft {
+  background-color: #f1f5f9;
+  color: #64748b;
+}
+
+.badge-credit {
+  background-color: #dcfce7;
+  color: #15803d;
+}
+
+.badge-debit {
+  background-color: #fee2e2;
+  color: #b91c1c;
+}
+
+.badge-revenue {
+  background-color: #e0e7ff;
+  color: #4338ca;
+}
+
+.badge-cogs {
+  background-color: #ffedd5;
+  color: #c2410c;
+}
+
+.badge-expense {
+  background-color: #fce7f3;
+  color: #be185d;
+}
+
+.badge-asset {
+  background-color: #ecfdf5;
+  color: #047857;
+}
+
+.badge-liability {
+  background-color: #fef2f2;
+  color: #991b1b;
+}
+
+/* Form Controls */
+.report-controls {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.report-controls label {
+  font-size: 0.875rem;
+  color: #374151;
+}
+
+.report-controls input,
+.report-controls select {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  outline: none;
+  background: #ffffff;
+}
+
+.report-controls input:focus,
+.report-controls select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.summary-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.summary-card-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: #64748b;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.summary-card-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #0f172a;
+  font-family: 'JetBrains Mono', monospace;
+}
