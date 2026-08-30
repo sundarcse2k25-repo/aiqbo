@@ -88,4 +88,12 @@ export const DUMMY_ACCOUNTS: Account[] = [
     type: 'liability',
     subType: 'current',
   },
+
+  // ── Equity ────────────────────────────────────────────────────────────────
+  {
+    id: 'ACC-EQU-001',
+    name: 'Retained Earnings',
+    type: 'equity',
+    subType: 'retained_earnings',
+  },
 ]

@@ -1,8 +1,22 @@
 import { describe, it, expect } from 'vitest'
-import { generateBalanceSheet } from '../balanceSheet.service'
-import type { Transaction, Invoice, Bill } from '@/types/accounting.types'
+import { generateBalanceSheet, calculateLedgerDerivedBalances } from '../balanceSheet.service'
+import { invoicesToJournalEntries, billsToJournalEntries, paymentsToJournalEntries } from '@/data/dummy/journalEntries'
+import { resolveControlAccounts } from '../../utils/controlAccounts'
+import type { Account, Invoice, Bill, Payment } from '@/types/accounting.types'
 
 describe('BalanceSheetService', () => {
+  const accounts: Account[] = [
+    { id: 'ACC-REV-001', name: 'Sales Revenue', type: 'revenue' },
+    { id: 'ACC-EXP-001', name: 'Rent Expense', type: 'expense' },
+    { id: 'ACC-AST-001', name: 'Cash', type: 'asset' },
+    { id: 'ACC-AST-002', name: 'Bank', type: 'asset' },
+    { id: 'ACC-AST-003', name: 'Accounts Receivable', type: 'asset' },
+    { id: 'ACC-LIA-001', name: 'Accounts Payable', type: 'liability' },
+    { id: 'ACC-EQU-001', name: 'Retained Earnings', type: 'equity' },
+  ]
+  const accountMap = new Map(accounts.map((a) => [a.id, a]))
+  const controlAccounts = resolveControlAccounts(accounts)
+
   const invoices: Invoice[] = [
     {
       id: 'INV-1',
@@ -45,33 +59,52 @@ describe('BalanceSheetService', () => {
     },
   ]
 
-  const transactions: Transaction[] = [
-    { id: 'T-1', date: '2026-01-10', accountId: 'ACC-REV-001', accountType: 'revenue', description: 'Inv 1', amount: 100000, type: 'credit' },
-    { id: 'T-2', date: '2026-01-20', accountId: 'ACC-REV-001', accountType: 'revenue', description: 'Inv 2', amount: 50000, type: 'credit' },
-    { id: 'T-3', date: '2026-01-05', accountId: 'ACC-EXP-001', accountType: 'expense', description: 'Bill 1', amount: 20000, type: 'debit' },
-    { id: 'T-4', date: '2026-01-15', accountId: 'ACC-EXP-001', accountType: 'expense', description: 'Bill 2', amount: 10000, type: 'debit' },
+  const payments: Payment[] = [
+    { id: 'PAY-1', type: 'invoice', referenceId: 'INV-1', date: '2026-01-12', amount: 100000, method: 'bank_transfer' },
+    { id: 'PAY-2', type: 'bill', referenceId: 'BILL-1', date: '2026-01-06', amount: 20000, method: 'bank_transfer' },
+  ]
+
+  const journalEntries = [
+    ...invoicesToJournalEntries(invoices, accountMap, controlAccounts),
+    ...billsToJournalEntries(bills, accountMap, controlAccounts),
+    ...paymentsToJournalEntries(payments, accountMap, controlAccounts),
   ]
 
   it('calculates balanced balance sheet (Assets = Liabilities + Equity)', () => {
-    const report = generateBalanceSheet(transactions, invoices, bills, '2026-01-31')
+    const report = generateBalanceSheet(journalEntries, accounts, '2026-01-31')
 
     expect(report.reportType).toBe('BALANCE_SHEET')
-    // AR = 50,000 (INV-2)
+
+    // AR = 50,000 (INV-2, unpaid)
     const arItem = report.currentAssets.items.find((i) => i.accountId === 'ACC-AST-003')
     expect(arItem?.amount).toBe(50000)
 
-    // AP = 10,000 (BILL-2)
+    // AP = 10,000 (BILL-2, unpaid)
     const apItem = report.currentLiabilities.items.find((i) => i.accountId === 'ACC-LIA-001')
     expect(apItem?.amount).toBe(10000)
+
+    // Cash = 0 (no cash-method payments), Bank = 100k received - 20k paid = 80,000
+    const cashItem = report.currentAssets.items.find((i) => i.accountId === 'ACC-AST-001')
+    const bankItem = report.currentAssets.items.find((i) => i.accountId === 'ACC-AST-002')
+    expect(cashItem?.amount).toBe(0)
+    expect(bankItem?.amount).toBe(80000)
 
     // Net Profit = (100k + 50k) - (20k + 10k) = 120k -> Retained Earnings
     expect(report.retainedEarnings).toBe(120000)
 
-    // Total Assets = (Paid Rev 100k - Paid Bill 20k) + AR 50k = 80k + 50k = 130k
+    // Total Assets = Cash 0 + Bank 80k + AR 50k = 130k
     expect(report.totalAssets).toBe(130000)
 
     // Total Liab & Equity = AP 10k + Equity 120k = 130k
     expect(report.totalLiabilitiesAndEquity).toBe(130000)
     expect(report.isBalanced).toBe(true)
+  })
+
+  it('ledger-derived balances match the balance sheet line items directly', () => {
+    const ledger = calculateLedgerDerivedBalances(journalEntries, controlAccounts, '2026-01-31')
+    expect(ledger.accountsReceivable).toBe(50000)
+    expect(ledger.accountsPayable).toBe(10000)
+    expect(ledger.cash).toBe(0)
+    expect(ledger.bank).toBe(80000)
   })
 })

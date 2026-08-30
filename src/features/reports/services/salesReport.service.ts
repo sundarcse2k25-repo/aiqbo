@@ -24,9 +24,16 @@ export function generateSalesReport(
 ): SalesReport {
   const customerMap = new Map<string, string>(customers.map((c) => [c.id, c.name]))
 
-  // Filter invoices in range
+  // Filter invoices in range. Draft invoices have not been issued to the
+  // customer and are excluded from recognized sales, matching the revenue
+  // recognition rule used by the P&L report (see transactions.ts). Void
+  // invoices are cancelled and are never recognized.
   const periodInvoices = invoices.filter(
-    (inv) => inv.date >= fromDate && inv.date <= toDate && inv.status !== 'void',
+    (inv) =>
+      inv.date >= fromDate &&
+      inv.date <= toDate &&
+      inv.status !== 'void' &&
+      inv.status !== 'draft',
   )
 
   const totalSales = periodInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0)
@@ -119,16 +126,16 @@ export function generateSalesReport(
  */
 export class SalesReportService implements ReportService<ReportRequest, SalesReport> {
   async generate(request: ReportRequest, provider: DataProvider): Promise<SalesReport> {
-    const invoices = provider.getInvoices ? await provider.getInvoices() : []
-    const customers = provider.getCustomers ? await provider.getCustomers() : []
+    const invoices = await provider.getInvoices()
+    const customers = await provider.getCustomers()
     const periodLabel = request.periodLabel || `${request.fromDate} – ${request.toDate}`
 
     return generateSalesReport(invoices, customers, request.fromDate, request.toDate, periodLabel)
   }
 
   generateSync(request: ReportRequest, provider: DataProvider): SalesReport {
-    const invoices = (provider.getInvoices ? provider.getInvoices() : []) as Invoice[]
-    const customers = (provider.getCustomers ? provider.getCustomers() : []) as Customer[]
+    const invoices = provider.getInvoices() as Invoice[]
+    const customers = provider.getCustomers() as Customer[]
     const periodLabel = request.periodLabel || `${request.fromDate} – ${request.toDate}`
 
     return generateSalesReport(invoices, customers, request.fromDate, request.toDate, periodLabel)

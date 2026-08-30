@@ -1,4 +1,4 @@
-import type { Transaction, Account } from '@/types/accounting.types'
+import type { Account, JournalEntry } from '@/types/accounting.types'
 import type {
   GeneralLedgerReport,
   AccountLedgerGroup,
@@ -9,29 +9,78 @@ import type {
   ReportService,
   DataProvider,
 } from '../types/reporting.contracts'
+import { validateJournalEntry } from '../utils/journalValidation'
 
 /**
- * Generates a General Ledger report from transactions and accounts.
+ * One posted ledger line, addressed to a single account. This is the
+ * General Ledger's internal per-account working unit — each JournalEntry
+ * contributes one LedgerLine per JournalEntryLine it has.
+ */
+interface LedgerLine {
+  id: string
+  date: string
+  description: string
+  type: 'debit' | 'credit'
+  amount: number
+  sourceType?: string
+  sourceId?: string
+  accountId: string
+}
+
+/**
+ * Expands JournalEntry.lines into per-account LedgerLines. This is the only
+ * place the General Ledger touches JournalEntry structure directly — it
+ * reads line.debit/line.credit itself rather than going through the
+ * Transaction-shaped flattening bridge.
+ */
+function toLedgerLines(entries: JournalEntry[]): LedgerLine[] {
+  const lines: LedgerLine[] = []
+  for (const entry of entries) {
+    for (const line of entry.lines) {
+      lines.push({
+        id: `${entry.id}-${line.id}`,
+        date: entry.date,
+        description: line.description,
+        type: line.debit > 0 ? 'debit' : 'credit',
+        amount: line.debit > 0 ? line.debit : line.credit,
+        sourceType: entry.sourceType,
+        sourceId: entry.sourceId,
+        accountId: line.accountId,
+      })
+    }
+  }
+  return lines
+}
+
+/**
+ * Generates a General Ledger report directly from double-entry JournalEntry
+ * data — no intermediate Transaction[] conversion.
  *
- * Pure function with zero external side effects.
+ * Pure function with zero external side effects. Every JournalEntry is
+ * validated (debits === credits) before aggregation, so totalDebits equals
+ * totalCredits for the report as a whole, and AR/AP/Cash/Bank activity is
+ * included alongside Revenue/COGS/Expense.
  */
 export function generateGeneralLedger(
-  transactions: Transaction[],
+  journalEntries: JournalEntry[],
   accounts: Account[],
   fromDate: string,
   toDate: string,
   periodLabel: string = `${fromDate} – ${toDate}`,
 ): GeneralLedgerReport {
+  journalEntries.forEach(validateJournalEntry)
+
   const accountMap = new Map<string, Account>(accounts.map((a) => [a.id, a]))
+  const allLines = toLedgerLines(journalEntries)
 
-  // Separate opening transactions (before fromDate) vs period transactions
-  const openingTxns = transactions.filter((t) => t.date < fromDate)
-  const periodTxns = transactions.filter((t) => t.date >= fromDate && t.date <= toDate)
+  // Separate opening lines (before fromDate) vs period lines
+  const openingTxns = allLines.filter((t) => t.date < fromDate)
+  const periodTxns = allLines.filter((t) => t.date >= fromDate && t.date <= toDate)
 
-  // Group transactions by account
+  // Group lines by account
   const accountGroupsMap = new Map<string, {
     openingBalance: number
-    txns: Transaction[]
+    txns: LedgerLine[]
   }>()
 
   // Initialize for all known accounts
@@ -141,19 +190,19 @@ export function generateGeneralLedger(
  */
 export class GeneralLedgerService implements ReportService<ReportRequest, GeneralLedgerReport> {
   async generate(request: ReportRequest, provider: DataProvider): Promise<GeneralLedgerReport> {
-    const transactions = await provider.getTransactions()
-    const accounts = provider.getAccounts ? await provider.getAccounts() : []
+    const journalEntries = await provider.getJournalEntries()
+    const accounts = await provider.getAccounts()
     const periodLabel = request.periodLabel || `${request.fromDate} – ${request.toDate}`
 
-    return generateGeneralLedger(transactions, accounts, request.fromDate, request.toDate, periodLabel)
+    return generateGeneralLedger(journalEntries, accounts, request.fromDate, request.toDate, periodLabel)
   }
 
   generateSync(request: ReportRequest, provider: DataProvider): GeneralLedgerReport {
-    const transactions = provider.getTransactions() as Transaction[]
-    const accounts = (provider.getAccounts ? provider.getAccounts() : []) as Account[]
+    const journalEntries = provider.getJournalEntries() as JournalEntry[]
+    const accounts = provider.getAccounts() as Account[]
     const periodLabel = request.periodLabel || `${request.fromDate} – ${request.toDate}`
 
-    return generateGeneralLedger(transactions, accounts, request.fromDate, request.toDate, periodLabel)
+    return generateGeneralLedger(journalEntries, accounts, request.fromDate, request.toDate, periodLabel)
   }
 }
 

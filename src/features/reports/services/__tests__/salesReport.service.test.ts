@@ -54,4 +54,27 @@ describe('SalesReportService', () => {
     expect(licenceItem?.totalAmount).toBe(30000)
     expect(licenceItem?.quantity).toBe(15)
   })
+
+  it('excludes draft invoices from recognized sales, consistent with P&L', () => {
+    const withDraft: Invoice[] = [
+      ...testInvoices,
+      {
+        id: 'INV-3',
+        customerId: 'CUST-1',
+        date: '2026-03-20',
+        dueDate: '2026-04-20',
+        status: 'draft',
+        lines: [{ id: 'L4', accountId: 'ACC-REV-001', description: 'Draft deal', quantity: 1, unitPrice: 999999, amount: 999999 }],
+        totalAmount: 999999,
+      },
+    ]
+
+    const report = generateSalesReport(withDraft, testCustomers, '2026-03-01', '2026-03-31', 'March 2026')
+
+    // Total must be unchanged from the no-draft case above — the draft
+    // invoice must not be recognized as sales.
+    expect(report.totalSales).toBe(35000)
+    expect(report.totalInvoices).toBe(2)
+    expect(report.byCustomer.some((c) => c.totalAmount === 999999)).toBe(false)
+  })
 })

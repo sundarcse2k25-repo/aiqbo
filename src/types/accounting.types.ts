@@ -59,6 +59,15 @@ export interface Vendor {
 // Invoice
 // ---------------------------------------------------------------------------
 
+/**
+ * Recognition rule: 'draft' and 'void' invoices are never recognized as
+ * revenue or included in Sales/AR reporting — only 'sent' | 'paid' | 'overdue'
+ * represent an issued invoice. When mapping from QuickBooks Online later,
+ * QBO's Invoice.EmailStatus/Balance/void state must be mapped onto this
+ * same five-value model so recognition rules stay identical across
+ * providers (QBO has no native 'draft' invoice status — a QBO invoice
+ * that has not been sent/synced should map to 'draft' here).
+ */
 export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'void'
 
 export interface InvoiceLine {
@@ -89,6 +98,12 @@ export interface Invoice {
 // Bill
 // ---------------------------------------------------------------------------
 
+/**
+ * Recognition rule: 'draft' and 'void' bills are never recognized as an
+ * expense or liability — only 'received' | 'paid' | 'overdue' represent a
+ * confirmed bill. Mirrors InvoiceStatus's recognition rule (see above) so
+ * a future QBO Bill mapping stays consistent with the invoice mapping.
+ */
 export type BillStatus = 'draft' | 'received' | 'paid' | 'overdue' | 'void'
 
 export interface BillLine {
@@ -135,28 +150,48 @@ export interface Payment {
 }
 
 // ---------------------------------------------------------------------------
-// Transaction
+// Journal Entry (double-entry ledger)
 // ---------------------------------------------------------------------------
 //
-// Transactions are the normalised ledger entries that the reporting engine
-// works with. Both invoices and bills are converted into transactions before
-// being processed. This keeps the reporting engine decoupled from the
-// document types (Invoice, Bill).
+// A JournalEntry is the normalized double-entry ledger record the
+// reporting engine works with. Each entry groups two or more
+// JournalEntryLines that must balance (sum of debits === sum of credits).
+// This mirrors QuickBooks Online's own JournalEntry.Line[] shape,
+// minimizing future adapter work. Invoices and bills are converted into
+// JournalEntries before being processed, keeping the reporting engine
+// decoupled from the source document types (Invoice, Bill).
+//
+// (This model replaced an earlier single-sided Transaction type, which has
+// since been removed now that every report — P&L, General Ledger, Balance
+// Sheet — runs natively on JournalEntry.)
 
-export type TransactionType = 'debit' | 'credit'
+export type JournalSourceType =
+  | 'invoice'
+  | 'bill'
+  | 'payment'
+  | 'credit_memo'
+  | 'vendor_credit'
+  | 'journal'
 
-export interface Transaction {
+export interface JournalEntryLine {
+  id: string
+  accountId: string
+  accountType: AccountType
+  /** Exactly one of debit/credit is non-zero for a given line; never both. */
+  debit: number
+  credit: number
+  description: string
+  /** For AR/AP lines: which invoice/bill this line creates or settles. */
+  documentId?: string
+}
+
+export interface JournalEntry {
   id: string
   /** ISO date string: YYYY-MM-DD */
   date: string
-  /** Links back to the account for categorisation */
-  accountId: string
-  accountType: AccountType
   description: string
-  amount: number
-  /** credit = money in (revenue); debit = money out (expense/cogs) */
-  type: TransactionType
-  /** Optional reference to the source document */
-  sourceType?: 'invoice' | 'bill' | 'payment' | 'journal'
-  sourceId?: string
+  sourceType: JournalSourceType
+  sourceId: string
+  lines: JournalEntryLine[]
 }
+

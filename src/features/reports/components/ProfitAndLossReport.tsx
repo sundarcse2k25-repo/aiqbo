@@ -29,7 +29,7 @@ export default function ProfitAndLossReport({ report }: Props) {
 
           {report.revenueLines.map((line) => (
             <tr key={line.accountId}>
-              <td className="label">{line.accountId}</td>
+              <td className="label">{line.accountName}</td>
               <td className="amount">{formatCurrency(line.amount)}</td>
             </tr>
           ))}
@@ -46,7 +46,7 @@ export default function ProfitAndLossReport({ report }: Props) {
 
           {report.cogsLines.map((line) => (
             <tr key={line.accountId}>
-              <td className="label">{line.accountId}</td>
+              <td className="label">{line.accountName}</td>
               <td className="amount">{formatCurrency(line.amount)}</td>
             </tr>
           ))}
@@ -72,7 +72,7 @@ export default function ProfitAndLossReport({ report }: Props) {
 
           {report.expenseLines.map((line) => (
             <tr key={line.accountId}>
-              <td className="label">{line.accountId}</td>
+              <td className="label">{line.accountName}</td>
               <td className="amount">{formatCurrency(line.amount)}</td>
             </tr>
           ))}

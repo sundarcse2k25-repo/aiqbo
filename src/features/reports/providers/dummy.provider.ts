@@ -1,22 +1,24 @@
 import type {
-  Transaction,
+  JournalEntry,
   Account,
   Invoice,
   Bill,
   Customer,
   Vendor,
+  Payment,
 } from '@/types/accounting.types'
 import type {
   DataProvider,
   TransactionQueryFilter,
 } from '../types/reporting.contracts'
 import {
-  DUMMY_TRANSACTIONS,
+  DUMMY_JOURNAL_ENTRIES,
   DUMMY_ACCOUNTS,
   DUMMY_INVOICES,
   DUMMY_BILLS,
   DUMMY_CUSTOMERS,
   DUMMY_VENDORS,
+  DUMMY_PAYMENTS,
 } from '@/data/dummy'
 import { filterByDateRange } from '../utils/dateFilters'
 
@@ -28,18 +30,13 @@ import { filterByDateRange } from '../utils/dateFilters'
  */
 export class DummyDataProvider implements DataProvider {
   /**
-   * Retrieves transactions, optionally filtered by date range or accounts.
+   * Retrieves double-entry journal entries, optionally filtered by date range.
    */
-  getTransactions(filter?: TransactionQueryFilter): Transaction[] {
-    let results = DUMMY_TRANSACTIONS
+  getJournalEntries(filter?: TransactionQueryFilter): JournalEntry[] {
+    let results = DUMMY_JOURNAL_ENTRIES
 
     if (filter?.fromDate && filter?.toDate) {
       results = filterByDateRange(results, filter.fromDate, filter.toDate)
-    }
-
-    if (filter?.accountIds && filter.accountIds.length > 0) {
-      const idSet = new Set(filter.accountIds)
-      results = results.filter((txn) => idSet.has(txn.accountId))
     }
 
     return results
@@ -63,6 +60,10 @@ export class DummyDataProvider implements DataProvider {
 
   getVendors(): Vendor[] {
     return DUMMY_VENDORS
+  }
+
+  getPayments(): Payment[] {
+    return DUMMY_PAYMENTS
   }
 }
 

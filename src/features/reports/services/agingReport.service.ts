@@ -1,4 +1,4 @@
-import type { Invoice, Bill, Customer, Vendor } from '@/types/accounting.types'
+import type { Invoice, Bill, Customer, Vendor, JournalEntry, Account } from '@/types/accounting.types'
 import type {
   AgingReport,
   AgingBucketValues,
@@ -9,6 +9,8 @@ import type {
   ReportService,
   DataProvider,
 } from '../types/reporting.contracts'
+import { resolveControlAccounts, type ControlAccounts } from '../utils/controlAccounts'
+import { getLedgerOutstandingAmount } from '../utils/paymentAllocation'
 
 export interface AgingReportRequest extends ReportRequest {
   agingType: 'RECEIVABLES' | 'PAYABLES'
@@ -50,31 +52,57 @@ function placeInBucket(bucket: AgingBucketValues, amount: number, daysPastDue: n
 /**
  * Generates an Accounts Receivable (AR) Aging Summary Report.
  *
- * Evaluates unpaid customer invoices against the asOfDate.
+ * Outstanding is calculated per invoice from the double-entry ledger, not
+ * from Invoice.status:
+ *
+ *   outstanding = invoice.totalAmount − (AR-credit lines posted against
+ *                 that invoice's documentId, on or before asOfDate)
+ *
+ * Invoice.status is used only to exclude documents that were never
+ * recognized in the first place ('draft') or were cancelled ('void') — the
+ * same recognition rule already enforced when the invoice's own JournalEntry
+ * was generated (see journalEntries.ts). It is never used to decide whether
+ * an invoice is outstanding; that is a ledger fact, not a status label.
  */
 export function generateReceivablesAging(
   invoices: Invoice[],
   customers: Customer[],
+  journalEntries: JournalEntry[],
+  controlAccounts: ControlAccounts,
   asOfDate: string,
   periodLabel: string = `AR Aging as of ${asOfDate}`,
 ): AgingReport {
   const customerMap = new Map<string, string>(customers.map((c) => [c.id, c.name]))
 
-  // Invoices up to asOfDate that are unpaid (sent, overdue, draft)
-  const outstandingInvoices = invoices.filter(
-    (inv) => inv.date <= asOfDate && (inv.status === 'sent' || inv.status === 'overdue'),
+  // Every invoice that was ever recognized (not void/draft) and dated on
+  // or before asOfDate is a candidate — whether it still has a balance is
+  // determined below from the ledger, not from inv.status.
+  const recognizedInvoices = invoices.filter(
+    (inv) => inv.date <= asOfDate && inv.status !== 'void' && inv.status !== 'draft',
   )
 
   const summary = createEmptyBucket()
   const entityRowsMap = new Map<string, { bucket: AgingBucketValues; count: number }>()
 
-  for (const inv of outstandingInvoices) {
+  for (const inv of recognizedInvoices) {
+    const outstanding = getLedgerOutstandingAmount(
+      inv.totalAmount,
+      journalEntries,
+      inv.id,
+      controlAccounts.accountsReceivableId,
+      'credit',
+      asOfDate,
+    )
+    // Fully paid (or not yet applicable as of asOfDate has already been
+    // filtered above by inv.date) — nothing left to age.
+    if (outstanding <= 0) continue
+
     const daysPastDue = calculateDaysPastDue(inv.dueDate, asOfDate)
-    placeInBucket(summary, inv.totalAmount, daysPastDue)
+    placeInBucket(summary, outstanding, daysPastDue)
 
     const entry = entityRowsMap.get(inv.customerId) || { bucket: createEmptyBucket(), count: 0 }
     entry.count += 1
-    placeInBucket(entry.bucket, inv.totalAmount, daysPastDue)
+    placeInBucket(entry.bucket, outstanding, daysPastDue)
     entityRowsMap.set(inv.customerId, entry)
   }
 
@@ -108,31 +136,50 @@ export function generateReceivablesAging(
 /**
  * Generates an Accounts Payable (AP) Aging Summary Report.
  *
- * Evaluates unpaid vendor bills against the asOfDate.
+ * Outstanding is calculated per bill from the double-entry ledger, not
+ * from Bill.status:
+ *
+ *   outstanding = bill.totalAmount − (AP-debit lines posted against
+ *                 that bill's documentId, on or before asOfDate)
+ *
+ * Bill.status is used only to exclude documents that were never
+ * recognized ('draft') or were cancelled ('void') — see the symmetric
+ * note on generateReceivablesAging above.
  */
 export function generatePayablesAging(
   bills: Bill[],
   vendors: Vendor[],
+  journalEntries: JournalEntry[],
+  controlAccounts: ControlAccounts,
   asOfDate: string,
   periodLabel: string = `AP Aging as of ${asOfDate}`,
 ): AgingReport {
   const vendorMap = new Map<string, string>(vendors.map((v) => [v.id, v.name]))
 
-  // Bills up to asOfDate that are unpaid (received, overdue)
-  const outstandingBills = bills.filter(
-    (b) => b.date <= asOfDate && (b.status === 'received' || b.status === 'overdue'),
+  const recognizedBills = bills.filter(
+    (b) => b.date <= asOfDate && b.status !== 'void' && b.status !== 'draft',
   )
 
   const summary = createEmptyBucket()
   const entityRowsMap = new Map<string, { bucket: AgingBucketValues; count: number }>()
 
-  for (const bill of outstandingBills) {
+  for (const bill of recognizedBills) {
+    const outstanding = getLedgerOutstandingAmount(
+      bill.totalAmount,
+      journalEntries,
+      bill.id,
+      controlAccounts.accountsPayableId,
+      'debit',
+      asOfDate,
+    )
+    if (outstanding <= 0) continue
+
     const daysPastDue = calculateDaysPastDue(bill.dueDate, asOfDate)
-    placeInBucket(summary, bill.totalAmount, daysPastDue)
+    placeInBucket(summary, outstanding, daysPastDue)
 
     const entry = entityRowsMap.get(bill.vendorId) || { bucket: createEmptyBucket(), count: 0 }
     entry.count += 1
-    placeInBucket(entry.bucket, bill.totalAmount, daysPastDue)
+    placeInBucket(entry.bucket, outstanding, daysPastDue)
     entityRowsMap.set(bill.vendorId, entry)
   }
 
@@ -168,26 +215,34 @@ export function generatePayablesAging(
  */
 export class AgingReportService implements ReportService<AgingReportRequest, AgingReport> {
   async generate(request: AgingReportRequest, provider: DataProvider): Promise<AgingReport> {
+    const journalEntries = await provider.getJournalEntries()
+    const accounts = await provider.getAccounts()
+    const controlAccounts = resolveControlAccounts(accounts)
+
     if (request.agingType === 'RECEIVABLES') {
-      const invoices = provider.getInvoices ? await provider.getInvoices() : []
-      const customers = provider.getCustomers ? await provider.getCustomers() : []
-      return generateReceivablesAging(invoices, customers, request.asOfDate, request.periodLabel)
+      const invoices = await provider.getInvoices()
+      const customers = await provider.getCustomers()
+      return generateReceivablesAging(invoices, customers, journalEntries, controlAccounts, request.asOfDate, request.periodLabel)
     } else {
-      const bills = provider.getBills ? await provider.getBills() : []
-      const vendors = provider.getVendors ? await provider.getVendors() : []
-      return generatePayablesAging(bills, vendors, request.asOfDate, request.periodLabel)
+      const bills = await provider.getBills()
+      const vendors = await provider.getVendors()
+      return generatePayablesAging(bills, vendors, journalEntries, controlAccounts, request.asOfDate, request.periodLabel)
     }
   }
 
   generateSync(request: AgingReportRequest, provider: DataProvider): AgingReport {
+    const journalEntries = provider.getJournalEntries() as JournalEntry[]
+    const accounts = provider.getAccounts() as Account[]
+    const controlAccounts = resolveControlAccounts(accounts)
+
     if (request.agingType === 'RECEIVABLES') {
-      const invoices = (provider.getInvoices ? provider.getInvoices() : []) as Invoice[]
-      const customers = (provider.getCustomers ? provider.getCustomers() : []) as Customer[]
-      return generateReceivablesAging(invoices, customers, request.asOfDate, request.periodLabel)
+      const invoices = provider.getInvoices() as Invoice[]
+      const customers = provider.getCustomers() as Customer[]
+      return generateReceivablesAging(invoices, customers, journalEntries, controlAccounts, request.asOfDate, request.periodLabel)
     } else {
-      const bills = (provider.getBills ? provider.getBills() : []) as Bill[]
-      const vendors = (provider.getVendors ? provider.getVendors() : []) as Vendor[]
-      return generatePayablesAging(bills, vendors, request.asOfDate, request.periodLabel)
+      const bills = provider.getBills() as Bill[]
+      const vendors = provider.getVendors() as Vendor[]
+      return generatePayablesAging(bills, vendors, journalEntries, controlAccounts, request.asOfDate, request.periodLabel)
     }
   }
 }

@@ -9,6 +9,7 @@ import { balanceSheetService } from '@/features/reports/services/balanceSheet.se
 import { salesReportService } from '@/features/reports/services/salesReport.service'
 import { expenseReportService } from '@/features/reports/services/expenseReport.service'
 import { agingReportService } from '@/features/reports/services/agingReport.service'
+import { monthlyPerformanceService, KPI_EXPLANATIONS } from '@/features/reports/services/monthlyPerformance.service'
 
 // Report View Components
 import ProfitAndLossReport from '@/features/reports/components/ProfitAndLossReport'
@@ -18,8 +19,10 @@ import SalesReport from '@/features/reports/components/SalesReport'
 import ExpensesReport from '@/features/reports/components/ExpensesReport'
 import AgingReport from '@/features/reports/components/AgingReport'
 import AccountsReport from '@/features/reports/components/AccountsReport'
+import MonthlyPerformanceReport from '@/features/reports/components/MonthlyPerformanceReport'
+import KpiDocument from '@/features/reports/components/KpiDocument'
 
-type ReportTab = 'pnl' | 'balanceSheet' | 'gl' | 'sales' | 'expenses' | 'aging' | 'accounts'
+type ReportTab = 'pnl' | 'balanceSheet' | 'gl' | 'sales' | 'expenses' | 'aging' | 'accounts' | 'monthlyPerformance' | 'kpiDocument'
 
 interface ReportsPageProps {
   dataProvider?: DataProvider
@@ -32,6 +35,9 @@ export default function ReportsPage({ dataProvider = dummyDataProvider }: Report
   const [fromDate, setFromDate] = useState(`${currentYear}-01-01`)
   const [toDate, setToDate] = useState(`${currentYear}-12-31`)
   const [agingType, setAgingType] = useState<'RECEIVABLES' | 'PAYABLES'>('RECEIVABLES')
+  const [selectedMonth, setSelectedMonth] = useState(
+    `${currentYear}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
+  )
 
   /** Build human-readable period label */
   const periodLabel = useMemo(() => {
@@ -88,6 +94,16 @@ export default function ReportsPage({ dataProvider = dummyDataProvider }: Report
     ),
     [fromDate, toDate, agingType, dataProvider],
   )
+
+  // 7. Monthly Performance Report — uses its own {year, month} period, not
+  // the fromDate/toDate range control the other reports share.
+  const monthlyPerformanceReport = useMemo(() => {
+    const [yearStr, monthStr] = selectedMonth.split('-')
+    return monthlyPerformanceService.generateSync(
+      { year: Number(yearStr), month: Number(monthStr) },
+      dataProvider,
+    )
+  }, [selectedMonth, dataProvider])
 
   // Chart of accounts for the accounts tab
   const accounts = useMemo(
@@ -148,10 +164,22 @@ export default function ReportsPage({ dataProvider = dummyDataProvider }: Report
           >
             🏛 Chart of Accounts ({accounts.length})
           </button>
+          <button
+            className={`tab-button ${activeTab === 'monthlyPerformance' ? 'active' : ''}`}
+            onClick={() => setActiveTab('monthlyPerformance')}
+          >
+            📅 Monthly Performance
+          </button>
+          <button
+            className={`tab-button ${activeTab === 'kpiDocument' ? 'active' : ''}`}
+            onClick={() => setActiveTab('kpiDocument')}
+          >
+            📘 KPI Document
+          </button>
         </div>
 
         {/* Global Date Filter Controls (applicable to period and point-in-time reports) */}
-        {activeTab !== 'accounts' && (
+        {activeTab !== 'accounts' && activeTab !== 'monthlyPerformance' && activeTab !== 'kpiDocument' && (
           <div className="report-controls">
             <label htmlFor="from-date">From</label>
             <input
@@ -170,6 +198,19 @@ export default function ReportsPage({ dataProvider = dummyDataProvider }: Report
           </div>
         )}
 
+        {/* Month picker — Monthly Performance compares a selected month against the previous month */}
+        {activeTab === 'monthlyPerformance' && (
+          <div className="report-controls">
+            <label htmlFor="performance-month">Month</label>
+            <input
+              id="performance-month"
+              type="month"
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+            />
+          </div>
+        )}
+
         {/* Active Report View */}
         {activeTab === 'pnl' && <ProfitAndLossReport report={pnlReport} />}
         {activeTab === 'balanceSheet' && <BalanceSheetReport report={balanceSheetReport} />}
@@ -183,6 +224,8 @@ export default function ReportsPage({ dataProvider = dummyDataProvider }: Report
           />
         )}
         {activeTab === 'accounts' && <AccountsReport accounts={accounts} />}
+        {activeTab === 'monthlyPerformance' && <MonthlyPerformanceReport report={monthlyPerformanceReport} />}
+        {activeTab === 'kpiDocument' && <KpiDocument kpiExplanations={KPI_EXPLANATIONS} />}
       </div>
     </div>
   )

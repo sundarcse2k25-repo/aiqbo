@@ -26,8 +26,15 @@ export function generateExpenseReport(
   const vendorMap = new Map<string, string>(vendors.map((v) => [v.id, v.name]))
   const accountMap = new Map<string, Account>(accounts.map((a) => [a.id, a]))
 
+  // Draft bills have not been received/recorded as a liability and are
+  // excluded from recognized expenses, matching the recognition rule used
+  // by the P&L report (see transactions.ts). Void bills are cancelled.
   const periodBills = bills.filter(
-    (b) => b.date >= fromDate && b.date <= toDate && b.status !== 'void',
+    (b) =>
+      b.date >= fromDate &&
+      b.date <= toDate &&
+      b.status !== 'void' &&
+      b.status !== 'draft',
   )
 
   const totalExpenses = periodBills.reduce((sum, b) => sum + b.totalAmount, 0)
@@ -123,18 +130,18 @@ export function generateExpenseReport(
  */
 export class ExpenseReportService implements ReportService<ReportRequest, ExpenseReport> {
   async generate(request: ReportRequest, provider: DataProvider): Promise<ExpenseReport> {
-    const bills = provider.getBills ? await provider.getBills() : []
-    const vendors = provider.getVendors ? await provider.getVendors() : []
-    const accounts = provider.getAccounts ? await provider.getAccounts() : []
+    const bills = await provider.getBills()
+    const vendors = await provider.getVendors()
+    const accounts = await provider.getAccounts()
     const periodLabel = request.periodLabel || `${request.fromDate} – ${request.toDate}`
 
     return generateExpenseReport(bills, vendors, accounts, request.fromDate, request.toDate, periodLabel)
   }
 
   generateSync(request: ReportRequest, provider: DataProvider): ExpenseReport {
-    const bills = (provider.getBills ? provider.getBills() : []) as Bill[]
-    const vendors = (provider.getVendors ? provider.getVendors() : []) as Vendor[]
-    const accounts = (provider.getAccounts ? provider.getAccounts() : []) as Account[]
+    const bills = provider.getBills() as Bill[]
+    const vendors = provider.getVendors() as Vendor[]
+    const accounts = provider.getAccounts() as Account[]
     const periodLabel = request.periodLabel || `${request.fromDate} – ${request.toDate}`
 
     return generateExpenseReport(bills, vendors, accounts, request.fromDate, request.toDate, periodLabel)

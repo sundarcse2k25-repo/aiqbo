@@ -52,4 +52,25 @@ describe('ExpenseReportService', () => {
     const rentCategory = report.byCategory.find((c) => c.accountId === 'ACC-EXP-001')
     expect(rentCategory?.totalAmount).toBe(50000)
   })
+
+  it('excludes draft bills from recognized expenses, consistent with P&L', () => {
+    const withDraft: Bill[] = [
+      ...testBills,
+      {
+        id: 'B-3',
+        vendorId: 'VEND-1',
+        date: '2026-04-15',
+        dueDate: '2026-05-15',
+        status: 'draft',
+        lines: [{ id: 'BL-3', accountId: 'ACC-EXP-001', description: 'Unconfirmed bill', quantity: 1, unitPrice: 999999, amount: 999999 }],
+        totalAmount: 999999,
+      },
+    ]
+
+    const report = generateExpenseReport(withDraft, testVendors, testAccounts, '2026-04-01', '2026-04-30', 'Apr 2026')
+
+    // Total must be unchanged from the no-draft case above.
+    expect(report.totalExpenses).toBe(80000)
+    expect(report.byVendor.some((v) => v.totalAmount === 999999)).toBe(false)
+  })
 })
