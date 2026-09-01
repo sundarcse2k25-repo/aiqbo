@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { generateMonthlyPerformanceReport, monthlyPerformanceService } from '../monthlyPerformance.service'
+import { generateMonthlyPerformanceReport, monthlyPerformanceService, generateInsights } from '../monthlyPerformance.service'
 import { generateProfitAndLoss } from '../profitAndLoss.service'
+import { balanceSheetService } from '../balanceSheet.service'
 import { invoicesToJournalEntries, billsToJournalEntries, paymentsToJournalEntries } from '@/data/dummy/journalEntries'
 import { resolveControlAccounts } from '../../utils/controlAccounts'
 import { DummyDataProvider } from '../../providers/dummy.provider'
@@ -206,12 +207,19 @@ describe('MonthlyPerformanceReport — Jan/Feb 2026 hand-computed scenario', () 
     expect(report.revenueAnalysis.byCustomer[0].percentageOfTotal).toBe(100)
   })
 
-  it('Profitability chart data exposes two already-calculated data points (no new accounting logic)', () => {
-    expect(report.profitabilityChartData.length).toBe(2)
-    expect(report.profitabilityChartData[0].period).toBe('2026-01')
-    expect(report.profitabilityChartData[0].revenue).toBe(100000)
-    expect(report.profitabilityChartData[1].period).toBe('2026-02')
-    expect(report.profitabilityChartData[1].revenue).toBe(150000)
+  it('Profitability chart data covers a 6-month trailing window ending at the selected month, using only real (possibly zero) periods', () => {
+    // Feb 2026 selected -> trailing window is Sep 2025 .. Feb 2026. Only
+    // Jan/Feb 2026 have any journal activity in this fixture; the earlier
+    // months must show as real zeros, not be omitted or fabricated.
+    expect(report.profitabilityChartData.length).toBe(6)
+    expect(report.profitabilityChartData.map((p) => p.period)).toEqual([
+      '2025-09', '2025-10', '2025-11', '2025-12', '2026-01', '2026-02',
+    ])
+    expect(report.profitabilityChartData[0].revenue).toBe(0)
+    expect(report.profitabilityChartData[4].period).toBe('2026-01')
+    expect(report.profitabilityChartData[4].revenue).toBe(100000)
+    expect(report.profitabilityChartData[5].period).toBe('2026-02')
+    expect(report.profitabilityChartData[5].revenue).toBe(150000)
   })
 
   it('KPI explanations exist for every KPI referenced in the KPI table, with importance/direction metadata', () => {
@@ -374,5 +382,190 @@ describe('MonthlyPerformanceReport — full dummy dataset regression', () => {
     for (let month = 1; month <= 12; month++) {
       expect(() => monthlyPerformanceService.generateSync({ year: 2026, month }, provider)).not.toThrow()
     }
+  })
+
+  it('exposes a Financial Position section derived from the Balance Sheet, not a new calculation', () => {
+    const provider = new DummyDataProvider()
+    const report = monthlyPerformanceService.generateSync({ year: 2026, month: 8 }, provider)
+    const independentBs = balanceSheetService.generateSync({ fromDate: '2026-01-01', toDate: '2026-08-31' }, provider)
+
+    expect(report.financialPosition.assets.totalAssets).toBe(independentBs.totalAssets)
+    expect(report.financialPosition.assets.fixedAssets).toBe(independentBs.fixedAssets.total)
+    expect(report.financialPosition.assets.otherAssets).toBe(independentBs.otherAssets.total)
+    expect(report.financialPosition.liabilities.totalLiabilities).toBe(independentBs.totalLiabilities)
+    expect(report.financialPosition.equity.totalEquity).toBe(independentBs.totalEquity)
+    expect(report.financialPosition.isBalanced).toBe(true)
+  })
+
+  it('exposes a Debt & Coverage section that never reclassifies Accounts Payable as debt', () => {
+    const provider = new DummyDataProvider()
+    const report = monthlyPerformanceService.generateSync({ year: 2026, month: 8 }, provider)
+
+    expect(report.debtAndCoverage.totalDebt).toBe('N/A')
+    expect(report.debtAndCoverage.netDebt).toBe('N/A')
+    expect(report.debtAndCoverage.debtToEquity).toBe('N/A')
+    expect(report.debtAndCoverage.reason).toMatch(/interest-bearing debt/i)
+  })
+})
+
+describe('MonthlyPerformanceReport — multiple Bank/AR/AP accounts (e.g. "PNC Bank" + "Chase Checking", "AR - Trade" + "AR - Other")', () => {
+  // A company with 1 Cash account, 2 Bank accounts, 2 AR accounts, and 2 AP
+  // accounts. Every figure below is hand-computed from the entries so this
+  // is an independent reference, proving the report sums across every
+  // account sharing a role rather than reading only one resolved id.
+  const multiAccounts: Account[] = [
+    { id: 'REV-1', name: 'Sales Revenue', type: 'revenue' },
+    { id: 'COGS-1', name: 'Cost of Goods Sold', type: 'cogs' },
+    { id: 'CASH-1', name: 'Petty Cash', type: 'asset', subType: 'cash' },
+    { id: 'BANK-1', name: 'PNC Bank', type: 'asset', subType: 'bank' },
+    { id: 'BANK-2', name: 'Chase Checking', type: 'asset', subType: 'bank' },
+    { id: 'AR-1', name: 'AR - Trade', type: 'asset', subType: 'accounts_receivable' },
+    { id: 'AR-2', name: 'AR - Other', type: 'asset', subType: 'accounts_receivable' },
+    { id: 'AP-1', name: 'AP - Vendors', type: 'liability', subType: 'accounts_payable' },
+    { id: 'AP-2', name: 'AP - Contractors', type: 'liability', subType: 'accounts_payable' },
+    { id: 'EQU-1', name: 'Retained Earnings', type: 'equity' },
+  ]
+
+  // Feb 2026 activity:
+  //   Invoice INV-1 (100,000) posted to AR-1; INV-2 (50,000) posted to AR-2
+  //   Payment against INV-1 (100,000, full) received into BANK-1
+  //   Payment against INV-2 (20,000, partial) received into BANK-2
+  //   -> AR-1 balance 0, AR-2 balance 30,000  =>  total AR 30,000
+  //   -> BANK-1 balance 100,000, BANK-2 balance 20,000  =>  total Bank+Cash 120,000
+  //   Bill BILL-1 (10,000) posted to AP-1, unpaid
+  //   Bill BILL-2 (5,000) posted to AP-2, unpaid
+  //   -> total AP 15,000
+  const journalEntries: JournalEntry[] = [
+    {
+      id: 'JE-INV-1', date: '2026-02-05', description: 'Invoice INV-1', sourceType: 'invoice', sourceId: 'INV-1',
+      lines: [
+        { id: 'L1', accountId: 'AR-1', accountType: 'asset', debit: 100000, credit: 0, description: 'AR-1', documentId: 'INV-1' },
+        { id: 'L2', accountId: 'REV-1', accountType: 'revenue', debit: 0, credit: 100000, description: 'Revenue' },
+      ],
+    },
+    {
+      id: 'JE-INV-2', date: '2026-02-06', description: 'Invoice INV-2', sourceType: 'invoice', sourceId: 'INV-2',
+      lines: [
+        { id: 'L3', accountId: 'AR-2', accountType: 'asset', debit: 50000, credit: 0, description: 'AR-2', documentId: 'INV-2' },
+        { id: 'L4', accountId: 'REV-1', accountType: 'revenue', debit: 0, credit: 50000, description: 'Revenue' },
+      ],
+    },
+    {
+      id: 'JE-PAY-1', date: '2026-02-10', description: 'Payment for INV-1', sourceType: 'payment', sourceId: 'PAY-1',
+      lines: [
+        { id: 'L5', accountId: 'BANK-1', accountType: 'asset', debit: 100000, credit: 0, description: 'Bank', documentId: 'INV-1' },
+        { id: 'L6', accountId: 'AR-1', accountType: 'asset', debit: 0, credit: 100000, description: 'AR-1', documentId: 'INV-1' },
+      ],
+    },
+    {
+      id: 'JE-PAY-2', date: '2026-02-12', description: 'Partial payment for INV-2', sourceType: 'payment', sourceId: 'PAY-2',
+      lines: [
+        { id: 'L7', accountId: 'BANK-2', accountType: 'asset', debit: 20000, credit: 0, description: 'Bank', documentId: 'INV-2' },
+        { id: 'L8', accountId: 'AR-2', accountType: 'asset', debit: 0, credit: 20000, description: 'AR-2', documentId: 'INV-2' },
+      ],
+    },
+    {
+      id: 'JE-BILL-1', date: '2026-02-01', description: 'Bill BILL-1', sourceType: 'bill', sourceId: 'BILL-1',
+      lines: [
+        { id: 'L9', accountId: 'COGS-1', accountType: 'cogs', debit: 10000, credit: 0, description: 'COGS' },
+        { id: 'L10', accountId: 'AP-1', accountType: 'liability', debit: 0, credit: 10000, description: 'AP-1', documentId: 'BILL-1' },
+      ],
+    },
+    {
+      id: 'JE-BILL-2', date: '2026-02-03', description: 'Bill BILL-2', sourceType: 'bill', sourceId: 'BILL-2',
+      lines: [
+        { id: 'L11', accountId: 'COGS-1', accountType: 'cogs', debit: 5000, credit: 0, description: 'COGS' },
+        { id: 'L12', accountId: 'AP-2', accountType: 'liability', debit: 0, credit: 5000, description: 'AP-2', documentId: 'BILL-2' },
+      ],
+    },
+  ]
+
+  it('sums Accounts Receivable across every AR account instead of reading only one', () => {
+    const report = generateMonthlyPerformanceReport(2026, 2, journalEntries, multiAccounts, [], [])
+    expect(report.financials.accountsReceivable).toBe(30000) // AR-1 (0) + AR-2 (30,000)
+  })
+
+  it('sums Accounts Payable across every AP account instead of reading only one', () => {
+    const report = generateMonthlyPerformanceReport(2026, 2, journalEntries, multiAccounts, [], [])
+    expect(report.financials.accountsPayable).toBe(15000) // AP-1 (10,000) + AP-2 (5,000)
+  })
+
+  it('sums Cash + Bank across every Bank account for Operating Cash Flow', () => {
+    const report = generateMonthlyPerformanceReport(2026, 2, journalEntries, multiAccounts, [], [])
+    expect(report.cashFlow.operatingCashFlow).toBe(120000) // BANK-1 (100,000) + BANK-2 (20,000)
+  })
+
+  it('sums Cash + Bank across every Bank account for the Cash Ratio KPI', () => {
+    const report = generateMonthlyPerformanceReport(2026, 2, journalEntries, multiAccounts, [], [])
+    const cashRatio = report.kpis.liquidity.find((k) => k.key === 'cashRatio')!
+    // (Cash 0 + Bank 120,000) / Current Liabilities 15,000 = 8
+    expect(cashRatio.currentValue).toBe(8)
+  })
+
+  it('Working Capital reflects every current asset and liability account, not just the resolved single ones', () => {
+    const report = generateMonthlyPerformanceReport(2026, 2, journalEntries, multiAccounts, [], [])
+    const workingCapital = report.kpis.liquidity.find((k) => k.key === 'workingCapital')!
+    // Current assets: Cash 0 + Bank 120,000 + AR 30,000 = 150,000; Current liabilities: AP 15,000
+    expect(workingCapital.currentValue).toBe(135000)
+  })
+})
+
+describe('generateInsights', () => {
+  const allUnavailable = {
+    revenueGrowth: 'N/A' as const,
+    netMarginCurrent: 'N/A' as const,
+    netMarginPrevious: 'N/A' as const,
+    cccCurrent: 'N/A' as const,
+    cccPrevious: 'N/A' as const,
+    roceCurrent: 'N/A' as const,
+    rocePrevious: 'N/A' as const,
+    freeCashFlow: 'N/A' as const,
+    netDebtCurrent: 'N/A' as const,
+    netDebtPrevious: 'N/A' as const,
+  }
+
+  it('produces no insight for a metric that is N/A', () => {
+    const insights = generateInsights(allUnavailable)
+    expect(insights.length).toBe(0)
+  })
+
+  it('describes positive revenue growth', () => {
+    const insights = generateInsights({ ...allUnavailable, revenueGrowth: 25 })
+    expect(insights.some((i) => /Revenue increased 25\.0%/.test(i))).toBe(true)
+  })
+
+  it('describes negative revenue growth', () => {
+    const insights = generateInsights({ ...allUnavailable, revenueGrowth: -92.4 })
+    expect(insights.some((i) => /Revenue decreased 92\.4%/.test(i))).toBe(true)
+  })
+
+  it('describes flat revenue with no growth percentage', () => {
+    const insights = generateInsights({ ...allUnavailable, revenueGrowth: 0 })
+    expect(insights.some((i) => /Revenue was flat/.test(i))).toBe(true)
+  })
+
+  it('describes an improving cash conversion cycle', () => {
+    const insights = generateInsights({ ...allUnavailable, cccCurrent: 1, cccPrevious: 2 })
+    expect(insights.some((i) => /Cash conversion improved from 2 to 1 days/.test(i))).toBe(true)
+  })
+
+  it('describes a lengthening cash conversion cycle', () => {
+    const insights = generateInsights({ ...allUnavailable, cccCurrent: 19, cccPrevious: 1 })
+    expect(insights.some((i) => /lengthened from 1 to 19 days/.test(i))).toBe(true)
+  })
+
+  it('describes positive and negative free cash flow', () => {
+    expect(generateInsights({ ...allUnavailable, freeCashFlow: 39476 }).some((i) => /remains positive/.test(i))).toBe(true)
+    expect(generateInsights({ ...allUnavailable, freeCashFlow: -21743 }).some((i) => /negative and should be monitored/.test(i))).toBe(true)
+  })
+
+  it('describes rising and falling net debt (numerically lower net debt = "decreased", matching the Fathom sample: ($350,378) from ($327,795) is a decrease)', () => {
+    expect(generateInsights({ ...allUnavailable, netDebtCurrent: -350378, netDebtPrevious: -327795 }).some((i) => /decreased/.test(i))).toBe(true)
+    expect(generateInsights({ ...allUnavailable, netDebtCurrent: -211137, netDebtPrevious: -241275 }).some((i) => /increased/.test(i))).toBe(true)
+  })
+
+  it('ignores a negligible margin change to avoid noise', () => {
+    const insights = generateInsights({ ...allUnavailable, netMarginCurrent: 10, netMarginPrevious: 10.01 })
+    expect(insights.some((i) => /margin/.test(i))).toBe(false)
   })
 })

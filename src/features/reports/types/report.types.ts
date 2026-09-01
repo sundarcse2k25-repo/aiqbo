@@ -101,10 +101,18 @@ export interface BalanceSheetReport extends BaseReportResult {
 
   /** Assets */
   currentAssets: BalanceSheetSection
+  /** Non-current assets such as equipment, content/production assets, etc. (net of any contra accounts, e.g. Accumulated Depreciation) */
+  fixedAssets: BalanceSheetSection
+  /** Non-current, non-fixed assets such as security deposits or long-term investments */
+  otherAssets: BalanceSheetSection
+  /** Sum of currentAssets + fixedAssets + otherAssets */
   totalAssets: number
 
   /** Liabilities */
   currentLiabilities: BalanceSheetSection
+  /** Liabilities not due within the current period, e.g. notes payable, long-term loans */
+  longTermLiabilities: BalanceSheetSection
+  /** Sum of currentLiabilities + longTermLiabilities */
   totalLiabilities: number
 
   /** Equity */

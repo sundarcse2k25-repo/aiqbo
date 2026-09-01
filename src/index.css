@@ -319,3 +319,29 @@ h1, h2, h3, h4, h5, h6 {
   color: #0f172a;
   font-family: 'JetBrains Mono', monospace;
 }
+
+/* Print-friendly rendering for management reports (e.g. Monthly Performance) */
+@media print {
+  .nav-bar,
+  .tab-navigation,
+  .report-controls {
+    display: none !important;
+  }
+
+  .page-container {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .report-container {
+    border: none;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .report-section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

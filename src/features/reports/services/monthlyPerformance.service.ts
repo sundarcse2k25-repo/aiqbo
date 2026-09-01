@@ -8,12 +8,14 @@ import type {
   KPIDirection,
   KPIImportanceChartPoint,
   MonthPeriod,
+  ProfitabilityChartPoint,
+  CashFlowChartPoint,
 } from '../types/monthlyPerformance.types'
 import type { DataProvider } from '../types/reporting.contracts'
 import { generateProfitAndLoss } from './profitAndLoss.service'
 import { generateBalanceSheet } from './balanceSheet.service'
 import { generateSalesReport } from './salesReport.service'
-import { resolveControlAccounts } from '../utils/controlAccounts'
+import { resolveControlAccountGroups } from '../utils/controlAccounts'
 import {
   getMonthRange,
   getPreviousMonth,
@@ -45,27 +47,141 @@ function subtract(a: KPIValue, b: KPIValue): KPIValue {
 
 /**
  * Net movement (debit − credit, this being a debit-normal asset account) on
- * one control account between fromDate and toDate (inclusive), derived
- * directly from journal entry lines. This is NOT the old Balance-Sheet
- * 20/80 Cash/Bank heuristic and is NOT `paidRevenue − paidBills` — it is a
- * real sum over posted ledger lines for the exact account and period
- * requested.
+ * one control account — or every account sharing a role, e.g. all Bank
+ * accounts when a company has more than one — between fromDate and toDate
+ * (inclusive), derived directly from journal entry lines. This is NOT the
+ * old Balance-Sheet 20/80 Cash/Bank heuristic and is NOT `paidRevenue −
+ * paidBills` — it is a real sum over posted ledger lines for the exact
+ * account(s) and period requested.
  */
 function getNetLedgerMovement(
   journalEntries: JournalEntry[],
-  accountId: string,
+  accountId: string | string[],
   fromDate: string,
   toDate: string,
 ): number {
+  const accountIds = Array.isArray(accountId) ? accountId : [accountId]
   let net = 0
   for (const entry of journalEntries) {
     if (entry.date < fromDate || entry.date > toDate) continue
     for (const line of entry.lines) {
-      if (line.accountId !== accountId) continue
+      if (!accountIds.includes(line.accountId)) continue
       net += line.debit - line.credit
     }
   }
   return net
+}
+
+/**
+ * Sums the amounts of every Balance Sheet line item whose accountId is one
+ * of accountIds — i.e. the combined balance across every account playing a
+ * given role (e.g. all Accounts Receivable accounts), rather than a single
+ * hardcoded account.
+ */
+function sumAmounts(items: { accountId: string; amount: number }[], accountIds: string[]): number {
+  return items.filter((i) => accountIds.includes(i.accountId)).reduce((sum, i) => sum + i.amount, 0)
+}
+
+/** How many trailing months (including the selected one) chart series cover. */
+const CHART_HISTORY_MONTHS = 6
+
+/**
+ * Walks backward from the selected month, returning `count` consecutive
+ * {year, month} pairs ending at (and including) the selected month, in
+ * chronological order. A month with no journal activity yet still appears
+ * — generateProfitAndLoss correctly returns zeros for it — so the series
+ * is never padded with fabricated data, only genuinely empty real periods.
+ */
+function buildTrailingMonths(year: number, month: number, count: number): { year: number; month: number }[] {
+  const months: { year: number; month: number }[] = []
+  let y = year
+  let m = month
+  for (let i = 0; i < count; i++) {
+    months.unshift({ year: y, month: m })
+    const prev = getPreviousMonth(y, m)
+    y = prev.year
+    m = prev.month
+  }
+  return months
+}
+
+interface InsightInputs {
+  revenueGrowth: KPIValue
+  netMarginCurrent: KPIValue
+  netMarginPrevious: KPIValue
+  cccCurrent: KPIValue
+  cccPrevious: KPIValue
+  roceCurrent: KPIValue
+  rocePrevious: KPIValue
+  freeCashFlow: KPIValue
+  netDebtCurrent: KPIValue
+  netDebtPrevious: KPIValue
+}
+
+/**
+ * Deterministic, rule-based management insights derived only from KPI
+ * values the caller already computed — no new calculation happens here,
+ * and no line is ever generated for an 'N/A' metric. This is intentionally
+ * simple pattern-matching (direction + a minimum-change threshold to avoid
+ * noise on negligible movements), not a speculative or AI-generated
+ * summary.
+ */
+export function generateInsights(inputs: InsightInputs): string[] {
+  const insights: string[] = []
+
+  if (inputs.revenueGrowth !== 'N/A') {
+    if (inputs.revenueGrowth > 0) {
+      insights.push(`Revenue increased ${inputs.revenueGrowth.toFixed(1)}% compared with the previous month.`)
+    } else if (inputs.revenueGrowth < 0) {
+      insights.push(`Revenue decreased ${Math.abs(inputs.revenueGrowth).toFixed(1)}% compared with the previous month.`)
+    } else {
+      insights.push('Revenue was flat compared with the previous month.')
+    }
+  }
+
+  if (inputs.netMarginCurrent !== 'N/A' && inputs.netMarginPrevious !== 'N/A') {
+    const change = inputs.netMarginCurrent - inputs.netMarginPrevious
+    if (Math.abs(change) >= 0.05) {
+      insights.push(
+        change > 0
+          ? `Net profit margin improved by ${change.toFixed(1)} percentage points, indicating improved profitability.`
+          : `Net profit margin declined by ${Math.abs(change).toFixed(1)} percentage points.`,
+      )
+    }
+  }
+
+  if (inputs.cccCurrent !== 'N/A' && inputs.cccPrevious !== 'N/A') {
+    if (inputs.cccCurrent < inputs.cccPrevious) {
+      insights.push(`Cash conversion improved from ${inputs.cccPrevious.toFixed(0)} to ${inputs.cccCurrent.toFixed(0)} days.`)
+    } else if (inputs.cccCurrent > inputs.cccPrevious) {
+      insights.push(`Cash conversion cycle lengthened from ${inputs.cccPrevious.toFixed(0)} to ${inputs.cccCurrent.toFixed(0)} days.`)
+    }
+  }
+
+  if (inputs.roceCurrent !== 'N/A' && inputs.rocePrevious !== 'N/A') {
+    const change = inputs.roceCurrent - inputs.rocePrevious
+    if (Math.abs(change) >= 0.5) {
+      insights.push(
+        change > 0
+          ? 'Return on Capital Employed improved, indicating better capital efficiency.'
+          : 'Return on Capital Employed declined, indicating less efficient use of capital.',
+      )
+    }
+  }
+
+  if (inputs.freeCashFlow !== 'N/A') {
+    insights.push(inputs.freeCashFlow >= 0 ? 'Free cash flow remains positive.' : 'Free cash flow is negative and should be monitored.')
+  }
+
+  if (inputs.netDebtCurrent !== 'N/A' && inputs.netDebtPrevious !== 'N/A') {
+    if (inputs.netDebtCurrent < inputs.netDebtPrevious) {
+      insights.push('Net debt decreased compared with the previous month.')
+    } else if (inputs.netDebtCurrent > inputs.netDebtPrevious) {
+      insights.push('Net debt increased compared with the previous month.')
+    }
+  }
+
+  return insights
 }
 
 function kpiRow(
@@ -134,7 +250,7 @@ export function generateMonthlyPerformanceReport(
   const prevPrevMonth = getPreviousMonth(previousPeriod.year, previousPeriod.month)
   const prevPrevPeriod = getMonthRange(prevPrevMonth.year, prevPrevMonth.month)
 
-  const controlAccounts = resolveControlAccounts(accounts)
+  const controlAccounts = resolveControlAccountGroups(accounts)
 
   // P&L for the current and previous month (flow figures).
   const pnlCurrent = generateProfitAndLoss(journalEntries, period.fromDate, period.toDate, period.label, accounts)
@@ -146,15 +262,12 @@ export function generateMonthlyPerformanceReport(
   const bsPrevious = generateBalanceSheet(journalEntries, accounts, previousPeriod.toDate)
   const bsPrevPrev = generateBalanceSheet(journalEntries, accounts, prevPrevPeriod.toDate)
 
-  const findAmount = (items: { accountId: string; amount: number }[], accountId: string): number =>
-    items.find((i) => i.accountId === accountId)?.amount ?? 0
-
-  const cashCurrent = findAmount(bsCurrent.currentAssets.items, controlAccounts.cashAccountId)
-  const bankCurrent = findAmount(bsCurrent.currentAssets.items, controlAccounts.bankAccountId)
-  const arCurrent = findAmount(bsCurrent.currentAssets.items, controlAccounts.accountsReceivableId)
-  const apCurrent = findAmount(bsCurrent.currentLiabilities.items, controlAccounts.accountsPayableId)
-  const arPrevious = findAmount(bsPrevious.currentAssets.items, controlAccounts.accountsReceivableId)
-  const apPrevious = findAmount(bsPrevious.currentLiabilities.items, controlAccounts.accountsPayableId)
+  const cashCurrent = sumAmounts(bsCurrent.currentAssets.items, controlAccounts.cashAccountIds)
+  const bankCurrent = sumAmounts(bsCurrent.currentAssets.items, controlAccounts.bankAccountIds)
+  const arCurrent = sumAmounts(bsCurrent.currentAssets.items, controlAccounts.accountsReceivableIds)
+  const apCurrent = sumAmounts(bsCurrent.currentLiabilities.items, controlAccounts.accountsPayableIds)
+  const arPrevious = sumAmounts(bsPrevious.currentAssets.items, controlAccounts.accountsReceivableIds)
+  const apPrevious = sumAmounts(bsPrevious.currentLiabilities.items, controlAccounts.accountsPayableIds)
 
   const capitalEmployedCurrent = bsCurrent.totalAssets - bsCurrent.totalLiabilities
   const capitalEmployedPrevious = bsPrevious.totalAssets - bsPrevious.totalLiabilities
@@ -162,7 +275,6 @@ export function generateMonthlyPerformanceReport(
 
   // Operating Profit = Net Profit in this model (see OPERATING_PROFIT_NOTE).
   const operatingProfitCurrent: KPIValue = pnlCurrent.netProfit
-  const operatingProfitPrevious: KPIValue = pnlPrevious.netProfit
 
   // ---------------------------------------------------------------------
   // Profitability margins
@@ -190,8 +302,8 @@ export function generateMonthlyPerformanceReport(
   const quickRatioPrevious = currentRatioPrevious
   const cashRatioCurrent = safeDivide(cashCurrent + bankCurrent, bsCurrent.currentLiabilities.total)
   const cashRatioPrevious = safeDivide(
-    findAmount(bsPrevious.currentAssets.items, controlAccounts.cashAccountId) +
-      findAmount(bsPrevious.currentAssets.items, controlAccounts.bankAccountId),
+    sumAmounts(bsPrevious.currentAssets.items, controlAccounts.cashAccountIds) +
+      sumAmounts(bsPrevious.currentAssets.items, controlAccounts.bankAccountIds),
     bsPrevious.currentLiabilities.total,
   )
   const workingCapitalCurrent = bsCurrent.currentAssets.total - bsCurrent.currentLiabilities.total
@@ -202,12 +314,12 @@ export function generateMonthlyPerformanceReport(
   // ---------------------------------------------------------------------
   const arDaysCurrent = scaleByDays(safeDivide(average(arPrevious, arCurrent), pnlCurrent.totalRevenue), period.daysInMonth)
   const arDaysPrevious = scaleByDays(
-    safeDivide(average(findAmount(bsPrevPrev.currentAssets.items, controlAccounts.accountsReceivableId), arPrevious), pnlPrevious.totalRevenue),
+    safeDivide(average(sumAmounts(bsPrevPrev.currentAssets.items, controlAccounts.accountsReceivableIds), arPrevious), pnlPrevious.totalRevenue),
     previousPeriod.daysInMonth,
   )
   const apDaysCurrent = scaleByDays(safeDivide(average(apPrevious, apCurrent), pnlCurrent.totalCogs), period.daysInMonth)
   const apDaysPrevious = scaleByDays(
-    safeDivide(average(findAmount(bsPrevPrev.currentLiabilities.items, controlAccounts.accountsPayableId), apPrevious), pnlPrevious.totalCogs),
+    safeDivide(average(sumAmounts(bsPrevPrev.currentLiabilities.items, controlAccounts.accountsPayableIds), apPrevious), pnlPrevious.totalCogs),
     previousPeriod.daysInMonth,
   )
   const inventoryDays: KPIValue = 'N/A'
@@ -263,11 +375,11 @@ export function generateMonthlyPerformanceReport(
   const netProfitGrowth = percentGrowth(pnlCurrent.netProfit, pnlPrevious.netProfit)
 
   const operatingCashFlowCurrent =
-    getNetLedgerMovement(journalEntries, controlAccounts.cashAccountId, period.fromDate, period.toDate) +
-    getNetLedgerMovement(journalEntries, controlAccounts.bankAccountId, period.fromDate, period.toDate)
+    getNetLedgerMovement(journalEntries, controlAccounts.cashAccountIds, period.fromDate, period.toDate) +
+    getNetLedgerMovement(journalEntries, controlAccounts.bankAccountIds, period.fromDate, period.toDate)
   const operatingCashFlowPrevious =
-    getNetLedgerMovement(journalEntries, controlAccounts.cashAccountId, previousPeriod.fromDate, previousPeriod.toDate) +
-    getNetLedgerMovement(journalEntries, controlAccounts.bankAccountId, previousPeriod.fromDate, previousPeriod.toDate)
+    getNetLedgerMovement(journalEntries, controlAccounts.cashAccountIds, previousPeriod.fromDate, previousPeriod.toDate) +
+    getNetLedgerMovement(journalEntries, controlAccounts.bankAccountIds, previousPeriod.fromDate, previousPeriod.toDate)
   const capitalExpenditure: KPIValue = 'N/A'
   const freeCashFlow: KPIValue = 'N/A'
 
@@ -345,6 +457,86 @@ export function generateMonthlyPerformanceReport(
       percentageOfTotal: c.percentageOfTotal,
     })),
   }
+
+  // ---------------------------------------------------------------------
+  // Multi-month chart series (Section 4 / 10 / 12) — walks back up to
+  // CHART_HISTORY_MONTHS real months from the selected month, computed
+  // independently of the current/previous-month KPI values above so this
+  // has no effect on any existing KPI. A month with no journal activity
+  // yet correctly shows as zero (a real answer), never fabricated.
+  // ---------------------------------------------------------------------
+  const chartMonths = buildTrailingMonths(year, month, CHART_HISTORY_MONTHS)
+  const profitabilityChartData: ProfitabilityChartPoint[] = chartMonths.map((m) => {
+    const range = getMonthRange(m.year, m.month)
+    const pnl = generateProfitAndLoss(journalEntries, range.fromDate, range.toDate, range.label, accounts)
+    return {
+      period: `${m.year}-${String(m.month).padStart(2, '0')}`,
+      revenue: pnl.totalRevenue,
+      grossProfit: pnl.grossProfit,
+      operatingProfit: pnl.netProfit,
+      netProfit: pnl.netProfit,
+    }
+  })
+  const cashFlowChartData: CashFlowChartPoint[] = chartMonths.map((m) => {
+    const range = getMonthRange(m.year, m.month)
+    const ocf =
+      getNetLedgerMovement(journalEntries, controlAccounts.cashAccountIds, range.fromDate, range.toDate) +
+      getNetLedgerMovement(journalEntries, controlAccounts.bankAccountIds, range.fromDate, range.toDate)
+    return { period: `${m.year}-${String(m.month).padStart(2, '0')}`, operatingCashFlow: ocf, freeCashFlow: 'N/A' }
+  })
+
+  // ---------------------------------------------------------------------
+  // Financial Position (Section 11) — presentational grouping of the
+  // Balance Sheet's own sections; performs no calculation of its own.
+  // ---------------------------------------------------------------------
+  const financialPosition = {
+    assets: {
+      currentAssets: bsCurrent.currentAssets.total,
+      fixedAssets: bsCurrent.fixedAssets.total,
+      otherAssets: bsCurrent.otherAssets.total,
+      totalAssets: bsCurrent.totalAssets,
+    },
+    liabilities: {
+      currentLiabilities: bsCurrent.currentLiabilities.total,
+      longTermLiabilities: bsCurrent.longTermLiabilities.total,
+      totalLiabilities: bsCurrent.totalLiabilities,
+    },
+    equity: {
+      totalEquity: bsCurrent.totalEquity,
+      retainedEarnings: bsCurrent.retainedEarnings,
+    },
+    isBalanced: bsCurrent.isBalanced,
+  }
+
+  // ---------------------------------------------------------------------
+  // Debt & Coverage (Section 12) — groups the already-computed leverage
+  // KPIs into the shape a management report presents; Accounts Payable is
+  // never reclassified as debt (see NO_DEBT_REASON).
+  // ---------------------------------------------------------------------
+  const debtAndCoverage = {
+    totalDebt: 'N/A' as KPIValue,
+    cash: cashCurrent + bankCurrent,
+    netDebt: netDebtCurrent,
+    debtToEquity,
+    debtRatio,
+    interestExpense: 'N/A' as KPIValue,
+    interestCoverage,
+    dscr,
+    reason: NO_DEBT_REASON,
+  }
+
+  const insights = generateInsights({
+    revenueGrowth,
+    netMarginCurrent,
+    netMarginPrevious,
+    cccCurrent,
+    cccPrevious,
+    roceCurrent,
+    rocePrevious,
+    freeCashFlow,
+    netDebtCurrent,
+    netDebtPrevious,
+  })
 
   const toMonthPeriod = (p: ReturnType<typeof getMonthRange>): MonthPeriod => ({
     year: p.year,
@@ -446,22 +638,7 @@ export function generateMonthlyPerformanceReport(
       ebitdaNote: NO_EBITDA_REASON,
     },
 
-    profitabilityChartData: [
-      {
-        period: `${previousPeriod.year}-${String(previousPeriod.month).padStart(2, '0')}`,
-        revenue: pnlPrevious.totalRevenue,
-        grossProfit: pnlPrevious.grossProfit,
-        operatingProfit: operatingProfitPrevious,
-        netProfit: pnlPrevious.netProfit,
-      },
-      {
-        period: `${period.year}-${String(period.month).padStart(2, '0')}`,
-        revenue: pnlCurrent.totalRevenue,
-        grossProfit: pnlCurrent.grossProfit,
-        operatingProfit: operatingProfitCurrent,
-        netProfit: pnlCurrent.netProfit,
-      },
-    ],
+    profitabilityChartData,
 
     cashFlow: {
       operatingCashFlow: operatingCashFlowCurrent,
@@ -473,18 +650,7 @@ export function generateMonthlyPerformanceReport(
       freeCashFlowNote: NO_CAPEX_REASON,
     },
 
-    cashFlowChartData: [
-      {
-        period: `${previousPeriod.year}-${String(previousPeriod.month).padStart(2, '0')}`,
-        operatingCashFlow: operatingCashFlowPrevious,
-        freeCashFlow: 'N/A',
-      },
-      {
-        period: `${period.year}-${String(period.month).padStart(2, '0')}`,
-        operatingCashFlow: operatingCashFlowCurrent,
-        freeCashFlow: 'N/A',
-      },
-    ],
+    cashFlowChartData,
 
     financials: {
       revenue: pnlCurrent.totalRevenue,
@@ -506,6 +672,10 @@ export function generateMonthlyPerformanceReport(
     },
 
     kpiImportanceChartData,
+
+    financialPosition,
+    debtAndCoverage,
+    insights,
 
     kpiExplanations: KPI_EXPLANATIONS,
   }

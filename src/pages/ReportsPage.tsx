@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import type { DataProvider } from '@/features/reports/types/reporting.contracts'
 import { dummyDataProvider } from '@/features/reports/providers/dummy.provider'
+import { getHealth } from '@/api/apiClient'
 
 // Reporting Services
 import { profitAndLossService } from '@/features/reports/services/profitAndLoss.service'
@@ -38,6 +39,24 @@ export default function ReportsPage({ dataProvider = dummyDataProvider }: Report
   const [selectedMonth, setSelectedMonth] = useState(
     `${currentYear}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
   )
+
+  // Minimal Phase 2 backend-connectivity check — verifies the frontend can
+  // reach the new backend's /api/health endpoint. Purely informational; no
+  // report data flows through the backend yet.
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking')
+  useEffect(() => {
+    let cancelled = false
+    getHealth()
+      .then(() => {
+        if (!cancelled) setBackendStatus('online')
+      })
+      .catch(() => {
+        if (!cancelled) setBackendStatus('offline')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   /** Build human-readable period label */
   const periodLabel = useMemo(() => {
@@ -117,6 +136,12 @@ export default function ReportsPage({ dataProvider = dummyDataProvider }: Report
       <nav className="nav-bar">
         <h1>AIQBO</h1>
         <span>Accounting Intelligence &amp; Reporting Engine</span>
+        <span style={{ marginLeft: 'auto', fontSize: '0.75rem', opacity: 0.8 }}>
+          Backend:{' '}
+          {backendStatus === 'checking' && 'checking…'}
+          {backendStatus === 'online' && '🟢 connected'}
+          {backendStatus === 'offline' && '🔴 unreachable'}
+        </span>
       </nav>
 
       <div className="page-container">

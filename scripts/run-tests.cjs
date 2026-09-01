@@ -75,9 +75,21 @@ async function runTests() {
     '      try { actual(); } catch (e) { threw = true; }',
     '      check(threw, "Expected function to throw but it did not");',
     '    },',
+    '    toBeCloseTo(expected, precision) {',
+    '      var p = precision === undefined ? 2 : precision;',
+    '      var pass = Math.abs(actual - expected) < Math.pow(10, -p) / 2;',
+    '      check(pass, "Expected " + actual + " to be close to " + expected + " (precision " + p + ")");',
+    '    },',
     '    toMatch(pattern) {',
     '      const re = pattern instanceof RegExp ? pattern : new RegExp(pattern);',
     '      check(typeof actual === "string" && re.test(actual), "Expected " + JSON.stringify(actual) + " to match " + pattern);',
+    '    },',
+    '    toContain(expected) {',
+    '      var pass = actual !== null && actual !== undefined && (typeof actual === "string" || Array.isArray(actual)) && actual.indexOf(expected) !== -1;',
+    '      check(pass, "Expected " + JSON.stringify(actual) + " to contain " + JSON.stringify(expected));',
+    '    },',
+    '    toBeNull() {',
+    '      check(actual === null, "Expected value to be null but received " + JSON.stringify(actual));',
     '    },',
     '  };',
     '}',
@@ -93,7 +105,11 @@ async function runTests() {
 
   fs.writeFileSync(shimFile, shimCode);
 
-  const testFiles = findTestFiles(path.resolve(__dirname, '../src'));
+  const serverSrcDir = path.resolve(__dirname, '../server/src');
+  const testFiles = [
+    ...findTestFiles(path.resolve(__dirname, '../src')),
+    ...(fs.existsSync(serverSrcDir) ? findTestFiles(serverSrcDir) : []),
+  ];
   const bundlePath = path.resolve(__dirname, 'test-bundle.cjs');
 
   try {

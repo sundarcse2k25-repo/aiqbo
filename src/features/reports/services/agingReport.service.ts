@@ -9,7 +9,7 @@ import type {
   ReportService,
   DataProvider,
 } from '../types/reporting.contracts'
-import { resolveControlAccounts, type ControlAccounts } from '../utils/controlAccounts'
+import { resolveControlAccountGroups, type ControlAccountGroups } from '../utils/controlAccounts'
 import { getLedgerOutstandingAmount } from '../utils/paymentAllocation'
 
 export interface AgingReportRequest extends ReportRequest {
@@ -56,7 +56,12 @@ function placeInBucket(bucket: AgingBucketValues, amount: number, daysPastDue: n
  * from Invoice.status:
  *
  *   outstanding = invoice.totalAmount − (AR-credit lines posted against
- *                 that invoice's documentId, on or before asOfDate)
+ *                 that invoice's documentId, on or before asOfDate, across
+ *                 every account playing the Accounts Receivable role)
+ *
+ * A company may have more than one AR account (e.g. "AR - Trade" and
+ * "AR - Other"); controlAccounts.accountsReceivableIds carries all of them,
+ * and every one is netted so no AR account is silently ignored.
  *
  * Invoice.status is used only to exclude documents that were never
  * recognized in the first place ('draft') or were cancelled ('void') — the
@@ -68,7 +73,7 @@ export function generateReceivablesAging(
   invoices: Invoice[],
   customers: Customer[],
   journalEntries: JournalEntry[],
-  controlAccounts: ControlAccounts,
+  controlAccounts: ControlAccountGroups,
   asOfDate: string,
   periodLabel: string = `AR Aging as of ${asOfDate}`,
 ): AgingReport {
@@ -89,7 +94,7 @@ export function generateReceivablesAging(
       inv.totalAmount,
       journalEntries,
       inv.id,
-      controlAccounts.accountsReceivableId,
+      controlAccounts.accountsReceivableIds,
       'credit',
       asOfDate,
     )
@@ -140,7 +145,12 @@ export function generateReceivablesAging(
  * from Bill.status:
  *
  *   outstanding = bill.totalAmount − (AP-debit lines posted against
- *                 that bill's documentId, on or before asOfDate)
+ *                 that bill's documentId, on or before asOfDate, across
+ *                 every account playing the Accounts Payable role)
+ *
+ * A company may have more than one AP account (e.g. "AP - Vendors" and
+ * "AP - Contractors"); controlAccounts.accountsPayableIds carries all of
+ * them, and every one is netted so no AP account is silently ignored.
  *
  * Bill.status is used only to exclude documents that were never
  * recognized ('draft') or were cancelled ('void') — see the symmetric
@@ -150,7 +160,7 @@ export function generatePayablesAging(
   bills: Bill[],
   vendors: Vendor[],
   journalEntries: JournalEntry[],
-  controlAccounts: ControlAccounts,
+  controlAccounts: ControlAccountGroups,
   asOfDate: string,
   periodLabel: string = `AP Aging as of ${asOfDate}`,
 ): AgingReport {
@@ -168,7 +178,7 @@ export function generatePayablesAging(
       bill.totalAmount,
       journalEntries,
       bill.id,
-      controlAccounts.accountsPayableId,
+      controlAccounts.accountsPayableIds,
       'debit',
       asOfDate,
     )
@@ -217,7 +227,7 @@ export class AgingReportService implements ReportService<AgingReportRequest, Agi
   async generate(request: AgingReportRequest, provider: DataProvider): Promise<AgingReport> {
     const journalEntries = await provider.getJournalEntries()
     const accounts = await provider.getAccounts()
-    const controlAccounts = resolveControlAccounts(accounts)
+    const controlAccounts = resolveControlAccountGroups(accounts)
 
     if (request.agingType === 'RECEIVABLES') {
       const invoices = await provider.getInvoices()
@@ -233,7 +243,7 @@ export class AgingReportService implements ReportService<AgingReportRequest, Agi
   generateSync(request: AgingReportRequest, provider: DataProvider): AgingReport {
     const journalEntries = provider.getJournalEntries() as JournalEntry[]
     const accounts = provider.getAccounts() as Account[]
-    const controlAccounts = resolveControlAccounts(accounts)
+    const controlAccounts = resolveControlAccountGroups(accounts)
 
     if (request.agingType === 'RECEIVABLES') {
       const invoices = provider.getInvoices() as Invoice[]

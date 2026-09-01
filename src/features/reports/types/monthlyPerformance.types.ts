@@ -207,6 +207,39 @@ export interface KPIImportanceChartPoint {
   keys: string[]
 }
 
+/** Balance Sheet broken out into the sections a management report presents (Section 11). */
+export interface FinancialPositionSection {
+  assets: {
+    currentAssets: number
+    fixedAssets: number
+    otherAssets: number
+    totalAssets: number
+  }
+  liabilities: {
+    currentLiabilities: number
+    longTermLiabilities: number
+    totalLiabilities: number
+  }
+  equity: {
+    totalEquity: number
+    retainedEarnings: number
+  }
+  isBalanced: boolean
+}
+
+/** Debt distinguished from ordinary operating liabilities (Section 12). */
+export interface DebtAndCoverageSection {
+  totalDebt: KPIValue
+  cash: number
+  netDebt: KPIValue
+  debtToEquity: KPIValue
+  debtRatio: KPIValue
+  interestExpense: KPIValue
+  interestCoverage: KPIValue
+  dscr: KPIValue
+  reason: string
+}
+
 export interface FinancialsSnapshot {
   revenue: number
   cogs: number
@@ -244,6 +277,16 @@ export interface MonthlyPerformanceReport extends BaseReportResult {
   cashFlowChartData: CashFlowChartPoint[]
   kpiImportanceChartData: KPIImportanceChartPoint[]
   financials: FinancialsSnapshot
+  financialPosition: FinancialPositionSection
+  debtAndCoverage: DebtAndCoverageSection
+  /**
+   * Deterministic, rule-based observations derived from KPI values already
+   * computed above (e.g. "Revenue decreased 92.4% compared with last
+   * month"). Never generated for an 'N/A' metric, and never speculative —
+   * each line is a direct restatement of a trend/value this report already
+   * calculated, not an AI-generated inference.
+   */
+  insights: string[]
   kpiExplanations: KPIExplanation[]
 }
 

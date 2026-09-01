@@ -8,9 +8,10 @@
     "dev": "node -r ./polyfill.cjs ./node_modules/vite/bin/vite.js",
     "build": "tsc -b && node -r ./polyfill.cjs ./node_modules/vite/bin/vite.js build",
     "lint": "eslint .",
-    "check": "eslint . && tsc -b",
+    "check": "eslint . && tsc -b && tsc -p server/tsconfig.json",
     "test": "node scripts/run-tests.cjs",
     "preview": "node -r ./polyfill.cjs ./node_modules/vite/bin/vite.js preview",
+    "server": "node scripts/run-server.cjs",
     "prepare": "husky || true"
   },
   "dependencies": {

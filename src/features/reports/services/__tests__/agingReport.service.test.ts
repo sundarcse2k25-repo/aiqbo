@@ -1,18 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import { generateReceivablesAging, generatePayablesAging } from '../agingReport.service'
 import type { Invoice, Bill, Customer, Vendor, JournalEntry } from '@/types/accounting.types'
-import type { ControlAccounts } from '../../utils/controlAccounts'
+import type { ControlAccountGroups } from '../../utils/controlAccounts'
 
-const controlAccounts: ControlAccounts = {
-  cashAccountId: 'ACC-CASH',
-  bankAccountId: 'ACC-BANK',
-  accountsReceivableId: 'ACC-AR',
-  accountsPayableId: 'ACC-AP',
+const controlAccounts: ControlAccountGroups = {
+  cashAccountIds: ['ACC-CASH'],
+  bankAccountIds: ['ACC-BANK'],
+  accountsReceivableIds: ['ACC-AR'],
+  accountsPayableIds: ['ACC-AP'],
   retainedEarningsAccountId: 'ACC-EQU',
 }
 
 /** A customer payment entry: Bank debit + AR credit against one documentId. */
-function arPaymentEntry(id: string, date: string, documentId: string, amount: number): JournalEntry {
+function arPaymentEntry(id: string, date: string, documentId: string, amount: number, arAccountId: string = controlAccounts.accountsReceivableIds[0]): JournalEntry {
   return {
     id,
     date,
@@ -20,14 +20,14 @@ function arPaymentEntry(id: string, date: string, documentId: string, amount: nu
     sourceType: 'payment',
     sourceId: id,
     lines: [
-      { id: `${id}-BANK`, accountId: controlAccounts.bankAccountId, accountType: 'asset', debit: amount, credit: 0, description: 'Bank' },
-      { id: `${id}-AR`, accountId: controlAccounts.accountsReceivableId, accountType: 'asset', debit: 0, credit: amount, description: 'AR', documentId },
+      { id: `${id}-BANK`, accountId: controlAccounts.bankAccountIds[0], accountType: 'asset', debit: amount, credit: 0, description: 'Bank' },
+      { id: `${id}-AR`, accountId: arAccountId, accountType: 'asset', debit: 0, credit: amount, description: 'AR', documentId },
     ],
   }
 }
 
 /** A vendor payment entry: AP debit against one documentId + Bank credit. */
-function apPaymentEntry(id: string, date: string, documentId: string, amount: number): JournalEntry {
+function apPaymentEntry(id: string, date: string, documentId: string, amount: number, apAccountId: string = controlAccounts.accountsPayableIds[0]): JournalEntry {
   return {
     id,
     date,
@@ -35,8 +35,8 @@ function apPaymentEntry(id: string, date: string, documentId: string, amount: nu
     sourceType: 'payment',
     sourceId: id,
     lines: [
-      { id: `${id}-AP`, accountId: controlAccounts.accountsPayableId, accountType: 'liability', debit: amount, credit: 0, description: 'AP', documentId },
-      { id: `${id}-BANK`, accountId: controlAccounts.bankAccountId, accountType: 'asset', debit: 0, credit: amount, description: 'Bank' },
+      { id: `${id}-AP`, accountId: apAccountId, accountType: 'liability', debit: amount, credit: 0, description: 'AP', documentId },
+      { id: `${id}-BANK`, accountId: controlAccounts.bankAccountIds[0], accountType: 'asset', debit: 0, credit: amount, description: 'Bank' },
     ],
   }
 }
@@ -51,10 +51,10 @@ function arMultiDocumentPaymentEntry(id: string, date: string, allocations: { do
     sourceType: 'payment',
     sourceId: id,
     lines: [
-      { id: `${id}-BANK`, accountId: controlAccounts.bankAccountId, accountType: 'asset', debit: total, credit: 0, description: 'Bank' },
+      { id: `${id}-BANK`, accountId: controlAccounts.bankAccountIds[0], accountType: 'asset', debit: total, credit: 0, description: 'Bank' },
       ...allocations.map((a, i) => ({
         id: `${id}-AR-${i}`,
-        accountId: controlAccounts.accountsReceivableId,
+        accountId: controlAccounts.accountsReceivableIds[0],
         accountType: 'asset' as const,
         debit: 0,
         credit: a.amount,
@@ -222,6 +222,76 @@ describe('AR — ledger-derived outstanding', () => {
     const report = generateReceivablesAging([inv], customers, [payment], controlAccounts, asOfDate)
     expect(report.totalOutstanding).toBe(0)
     expect(report.totalOutstanding >= 0).toBe(true)
+  })
+})
+
+describe('AR — multiple Accounts Receivable accounts (e.g. "AR - Trade" + "AR - Other")', () => {
+  // A company with two separate AR accounts. controlAccounts here carries
+  // both ids in accountsReceivableIds; a payment applied against either
+  // account must be recognized, and neither account may be silently
+  // ignored (the pre-Phase-1 single-accountsReceivableId design would drop
+  // whichever account wasn't the resolved one).
+  const multiArControlAccounts: ControlAccountGroups = {
+    ...controlAccounts,
+    accountsReceivableIds: ['ACC-AR-TRADE', 'ACC-AR-OTHER'],
+  }
+  const asOfDate = '2026-06-30'
+  const customersMulti = [
+    { id: 'CUST-1', name: 'Client A' },
+    { id: 'CUST-2', name: 'Client B' },
+  ]
+
+  it('nets payments applied against either AR account for the same invoice', () => {
+    const inv: Invoice = { id: 'INV-1', customerId: 'CUST-1', date: '2026-06-01', dueDate: '2026-07-01', status: 'sent', lines: [], totalAmount: 100000 }
+    // Paid via the "AR - Other" account rather than "AR - Trade".
+    const payment = arPaymentEntry('PAY-1', '2026-06-05', 'INV-1', 40000, 'ACC-AR-OTHER')
+    const report = generateReceivablesAging([inv], customersMulti, [payment], multiArControlAccounts, asOfDate)
+    expect(report.totalOutstanding).toBe(60000)
+  })
+
+  it('aggregates outstanding balances across invoices settled through different AR accounts', () => {
+    const invA: Invoice = { id: 'INV-A', customerId: 'CUST-1', date: '2026-06-01', dueDate: '2026-07-01', status: 'sent', lines: [], totalAmount: 50000 }
+    const invB: Invoice = { id: 'INV-B', customerId: 'CUST-2', date: '2026-06-01', dueDate: '2026-07-01', status: 'sent', lines: [], totalAmount: 70000 }
+    const payments = [
+      arPaymentEntry('PAY-A', '2026-06-05', 'INV-A', 50000, 'ACC-AR-TRADE'), // fully pays INV-A via AR-Trade
+      arPaymentEntry('PAY-B', '2026-06-05', 'INV-B', 20000, 'ACC-AR-OTHER'), // partially pays INV-B via AR-Other
+    ]
+    const report = generateReceivablesAging([invA, invB], customersMulti, payments, multiArControlAccounts, asOfDate)
+    expect(report.totalOutstanding).toBe(50000) // only INV-B's remaining 50000, regardless of which AR account it moved through
+  })
+
+  it('a single AR account (accountsReceivableIds with one entry) still behaves exactly as before', () => {
+    const singleArControlAccounts: ControlAccountGroups = { ...controlAccounts, accountsReceivableIds: ['ACC-AR'] }
+    const inv: Invoice = { id: 'INV-1', customerId: 'CUST-1', date: '2026-06-01', dueDate: '2026-07-01', status: 'sent', lines: [], totalAmount: 100000 }
+    const payment = arPaymentEntry('PAY-1', '2026-06-05', 'INV-1', 40000)
+    const report = generateReceivablesAging([inv], customersMulti, [payment], singleArControlAccounts, asOfDate)
+    expect(report.totalOutstanding).toBe(60000)
+  })
+})
+
+describe('AP — multiple Accounts Payable accounts (e.g. "AP - Vendors" + "AP - Contractors")', () => {
+  const multiApControlAccounts: ControlAccountGroups = {
+    ...controlAccounts,
+    accountsPayableIds: ['ACC-AP-VENDORS', 'ACC-AP-CONTRACTORS'],
+  }
+  const asOfDate = '2026-06-30'
+
+  it('nets payments applied against either AP account for the same bill', () => {
+    const bill: Bill = { id: 'BILL-1', vendorId: 'VEND-1', date: '2026-06-01', dueDate: '2026-07-01', status: 'received', lines: [], totalAmount: 50000 }
+    const payment = apPaymentEntry('PAY-1', '2026-06-05', 'BILL-1', 20000, 'ACC-AP-CONTRACTORS')
+    const report = generatePayablesAging([bill], vendors, [payment], multiApControlAccounts, asOfDate)
+    expect(report.totalOutstanding).toBe(30000)
+  })
+
+  it('aggregates outstanding balances across bills settled through different AP accounts', () => {
+    const billA: Bill = { id: 'BILL-A', vendorId: 'VEND-1', date: '2026-06-01', dueDate: '2026-07-01', status: 'received', lines: [], totalAmount: 30000 }
+    const billB: Bill = { id: 'BILL-B', vendorId: 'VEND-1', date: '2026-06-01', dueDate: '2026-07-01', status: 'received', lines: [], totalAmount: 40000 }
+    const payments = [
+      apPaymentEntry('PAY-A', '2026-06-05', 'BILL-A', 30000, 'ACC-AP-VENDORS'), // fully pays BILL-A via AP-Vendors
+      apPaymentEntry('PAY-B', '2026-06-05', 'BILL-B', 10000, 'ACC-AP-CONTRACTORS'), // partially pays BILL-B via AP-Contractors
+    ]
+    const report = generatePayablesAging([billA, billB], vendors, payments, multiApControlAccounts, asOfDate)
+    expect(report.totalOutstanding).toBe(30000) // only BILL-B's remaining 30000
   })
 })
 

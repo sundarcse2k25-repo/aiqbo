@@ -45,6 +45,43 @@ export default function BalanceSheetReport({ report }: Props) {
             <td className="label" style={{ paddingLeft: '1rem' }}>Total {report.currentAssets.title}</td>
             <td className="amount positive">{formatCurrency(report.currentAssets.total)}</td>
           </tr>
+
+          {report.fixedAssets.items.length > 0 && (
+            <>
+              <tr style={{ fontWeight: 600, color: '#475569' }}>
+                <td colSpan={2} style={{ paddingLeft: '1rem', paddingTop: '1rem' }}>{report.fixedAssets.title}</td>
+              </tr>
+              {report.fixedAssets.items.map((item) => (
+                <tr key={item.accountId}>
+                  <td className="label" style={{ paddingLeft: '2rem' }}>{item.accountName}</td>
+                  <td className="amount">{formatCurrency(item.amount)}</td>
+                </tr>
+              ))}
+              <tr className="total-row">
+                <td className="label" style={{ paddingLeft: '1rem' }}>Total {report.fixedAssets.title}</td>
+                <td className="amount positive">{formatCurrency(report.fixedAssets.total)}</td>
+              </tr>
+            </>
+          )}
+
+          {report.otherAssets.items.length > 0 && (
+            <>
+              <tr style={{ fontWeight: 600, color: '#475569' }}>
+                <td colSpan={2} style={{ paddingLeft: '1rem', paddingTop: '1rem' }}>{report.otherAssets.title}</td>
+              </tr>
+              {report.otherAssets.items.map((item) => (
+                <tr key={item.accountId}>
+                  <td className="label" style={{ paddingLeft: '2rem' }}>{item.accountName}</td>
+                  <td className="amount">{formatCurrency(item.amount)}</td>
+                </tr>
+              ))}
+              <tr className="total-row">
+                <td className="label" style={{ paddingLeft: '1rem' }}>Total {report.otherAssets.title}</td>
+                <td className="amount positive">{formatCurrency(report.otherAssets.total)}</td>
+              </tr>
+            </>
+          )}
+
           <tr className="net-profit-row">
             <td className="label">TOTAL ASSETS</td>
             <td className="amount positive">{formatCurrency(report.totalAssets)}</td>
@@ -67,6 +104,25 @@ export default function BalanceSheetReport({ report }: Props) {
             <td className="label" style={{ paddingLeft: '1rem' }}>Total {report.currentLiabilities.title}</td>
             <td className="amount negative">{formatCurrency(report.currentLiabilities.total)}</td>
           </tr>
+
+          {report.longTermLiabilities.items.length > 0 && (
+            <>
+              <tr style={{ fontWeight: 600, color: '#475569' }}>
+                <td colSpan={2} style={{ paddingLeft: '1rem', paddingTop: '1rem' }}>{report.longTermLiabilities.title}</td>
+              </tr>
+              {report.longTermLiabilities.items.map((item) => (
+                <tr key={item.accountId}>
+                  <td className="label" style={{ paddingLeft: '2rem' }}>{item.accountName}</td>
+                  <td className="amount">{formatCurrency(item.amount)}</td>
+                </tr>
+              ))}
+              <tr className="total-row">
+                <td className="label" style={{ paddingLeft: '1rem' }}>Total {report.longTermLiabilities.title}</td>
+                <td className="amount negative">{formatCurrency(report.longTermLiabilities.total)}</td>
+              </tr>
+            </>
+          )}
+
           <tr className="total-row">
             <td className="label">TOTAL LIABILITIES</td>
             <td className="amount negative">{formatCurrency(report.totalLiabilities)}</td>

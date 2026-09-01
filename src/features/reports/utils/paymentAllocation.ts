@@ -48,22 +48,26 @@ export function getOutstandingAmount(documentTotal: number, documentId: string, 
 
 /**
  * Sums the AR-credit or AP-debit lines posted against one document
- * (documentId) on a given control account, up to and including asOfDate.
- * This is the "applied" amount: payments and credits that have reduced the
- * document's balance as of that date.
+ * (documentId) on a given control account (or set of control accounts — a
+ * company may have more than one AR/AP account, e.g. "AR - Trade" and
+ * "AR - Other"; a payment applied against a document could post against
+ * any of them), up to and including asOfDate. This is the "applied"
+ * amount: payments and credits that have reduced the document's balance
+ * as of that date.
  */
 export function getLedgerAppliedAmount(
   journalEntries: JournalEntry[],
   documentId: string,
-  controlAccountId: string,
+  controlAccountId: string | string[],
   side: 'debit' | 'credit',
   asOfDate: string,
 ): number {
+  const controlAccountIds = Array.isArray(controlAccountId) ? controlAccountId : [controlAccountId]
   let applied = 0
   for (const entry of journalEntries) {
     if (entry.date > asOfDate) continue
     for (const line of entry.lines) {
-      if (line.accountId !== controlAccountId) continue
+      if (!controlAccountIds.includes(line.accountId)) continue
       if (line.documentId !== documentId) continue
       applied += side === 'debit' ? line.debit : line.credit
     }
@@ -83,7 +87,7 @@ export function getLedgerOutstandingAmount(
   documentTotal: number,
   journalEntries: JournalEntry[],
   documentId: string,
-  controlAccountId: string,
+  controlAccountId: string | string[],
   side: 'debit' | 'credit',
   asOfDate: string,
 ): number {
